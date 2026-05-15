@@ -1,5 +1,6 @@
 import { z } from "zod"
 
+// Rota Criar Usuário (Validação Schema)
 export const createUserSchema = z.object({
     body: z.object({
 
@@ -13,7 +14,25 @@ export const createUserSchema = z.object({
                 .trim()  // Remove espaços
                 .toLowerCase(),  // Normaliza dados
 
-        password: z.string({ message: "Sua senha é obrigatória e deve ter números e letras!" })
+        password: z.string({ message: "Sua senha é obrigatória com números e letras!" })
+                   .min(6, { message: "Digite no mínimo 6 caracteres para senha!" }) // Impede string vazia ""
+                   .trim() // Remove espaços
+
+    })
+})
+
+
+// Rota Buscar Usuário (Validação Schema)
+export const authUserSchema = z.object({
+    body: z.object({
+
+        email: z.email({ message: "Precisa ser um e-mail válido!" })
+                .regex(/^(?!\.)(?!.*\.\.)([a-z0-9_'+\-\.]*)[a-z0-9_+-]@([a-z0-9][a-z0-9\-]*\.)+[a-z]{2,}$/i, { message: "Apenas caracteres minúsculos no email!" })
+                .min(1, { message: "Seu e-mail é obrigatório!" }) // Impede string vázia ""
+                .trim()  // Remove espaços
+                .toLowerCase(),  // Normaliza dados
+
+        password: z.string({ message: "Sua senha é obrigatória com números e letras!" })
                    .min(6, { message: "Digite no mínimo 6 caracteres para senha!" }) // Impede string vazia ""
                    .trim() // Remove espaços
 
