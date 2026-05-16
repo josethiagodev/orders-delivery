@@ -40,7 +40,7 @@ Tipagens de desenvolvimento:
 ## ARQUITETURA HTTP
 
 Fluxo padrão: 
-**rota → validação Zod → controller → service → Prisma (quando aplicável)**.
+**Rota → Validação (Zod) → Controller → Service → Prisma (quando aplicável)**.
 R[routes] --> V[validateSchema Zod] --> C[controllers] --> S[services] --> P[PrismaClient]
 
 ---
