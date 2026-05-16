@@ -1,12 +1,14 @@
 import { Router } from "express";
 
-// Controller ()
+// Controller
 import { CreateUserController } from "./controllers/user/CreateUserController.js";
 import { AuthUserController } from "./controllers/user/AuthUserController.js";
 import { DetailUserController } from "./controllers/user/DetailUserController.js";
 
-// Validação (EXPRESS + ZOD)
+// Validação (Middlewares)
 import { validateSchema } from "./middlewares/validateSchema.js";
+import { userIsAuthenticated } from "./middlewares/userIsAuthenticated.js";
+
 import { createUserSchema, authUserSchema } from "./schemas/userSchema.js";
 
 
@@ -24,10 +26,10 @@ router.post(
     validateSchema(authUserSchema), new AuthUserController().handle
 );
 
-// ROTA => Buscar detalhes do usuário (GET)
+// ROTA => Buscar dados do usuário logado (GET)
 router.get(
     "/me",
-    new DetailUserController().handle
+    userIsAuthenticated, new DetailUserController().handle
 );
 
 export { router };
