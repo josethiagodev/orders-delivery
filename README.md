@@ -41,12 +41,7 @@ Tipagens de desenvolvimento:
 
 Fluxo padrão: 
 **rota → validação Zod → controller → service → Prisma (quando aplicável)**.
-
-```mermaid
-flowchart
-  http [Camada HTTP]
-    R[routes] --> V[validateSchema Zod] --> C[controllers] --> S[services] --> P[PrismaClient]
-```
+R[routes] --> V[validateSchema Zod] --> C[controllers] --> S[services] --> P[PrismaClient]
 
 ---
 
