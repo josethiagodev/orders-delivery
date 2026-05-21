@@ -1,6 +1,6 @@
 # BACKEND JS — Orders Delivery
 
-Uma API desenvolvida com o ecossistema Javascript com fluxo (restaurante → balcão de mesa).
+Uma API desenvolvida a partir do ecossistema Javascript com o fluxo (restaurante → balcão de mesa).
 
 **Features**
 - Pedidos, Cardápio (categorias e produtos), usuários com hash e sessão JWT.
@@ -9,7 +9,7 @@ Uma API desenvolvida com o ecossistema Javascript com fluxo (restaurante → bal
 - PostgreSQL via Prisma: usuários, categorias, produtos, pedidos e itens.
 
 **HTTP implementado**
-- `POST /users`, `POST /session` (JWT), `GET /me`, `POST /category` (rota privada + role `ADMIN`).
+- `POST /users`, `POST /session` (JWT), `GET /me`, `POST /category` (JWT + role `ADMIN` + Zod).
 
 **Domínio cardápio/pedido**
 - Tabelas completas; endpoint HTTP apenas para **categoria** (criação). Produtos, pedidos e itens ainda sem rotas.
@@ -53,7 +53,7 @@ Tipagens (TS) de desenvolvimento:
 `Rota → userIsAuthenticated (JWT Bearer) → Controller → Service → Prisma`
 
 **Rotas privadas (role `ADMIN`):**
-`Rota → userIsAuthenticated → isAdminRole → Controller → Service → Prisma`
+`Rota → userIsAuthenticated → isAdminRole → validateSchema → Controller → Service → Prisma`
 
 ---
 
@@ -131,10 +131,11 @@ Domínio: **cardápio** (categoria → produto) e **pedido** (pedido → itens).
 
 | Modelo | Tabela | O que importa no desenho |
 |--------|--------|-------------------------|
+
 | **User** | `users` | UUID; `email` único; `password` como hash (app); `Role` `STAFF` \| `ADMIN` (default `STAFF`); timestamps. Cadastro não aceita `role` no body. |
 | **Category** | `categories` | Nome; 1:N com produtos. |
 | **Product** | `products` | FK `category_id` com `ON DELETE CASCADE`; `price` em **centavos**; `description`, `banner`; `disabled` — ver comentários em `schema.prisma` (alinhar semântica antes do front). |
-| **Order** | `orders` | `table` (mesa); `status` bool — `false` pendente / `true` pronto; `draft` bool — default `true` no banco; ver comentários em `schema.prisma`; `name` opcional. |
+| **Order** | `orders` | `table` (mesa); `status` boolean — `false` pendente / `true` pronto; `draft` bool — default `true` no banco; ver comentários em `schema.prisma`; `name` opcional. |
 | **Item** | `items` | `amount`; FKs `order_id` e `product_id` com CASCADE. Relação Prisma `Order.itens` → `@map("items")`. |
 
 ---
@@ -204,9 +205,14 @@ Domínio: **cardápio** (categoria → produto) e **pedido** (pedido → itens).
 ### `POST /category`
 
 - **Auth:** Bearer JWT + role **`ADMIN`** (`isAdminRole`).
-- **Pipeline:** `userIsAuthenticated` → `isAdminRole` → `CreateCategoryController` → `CreateCategoryService`.
-- **Corpo:** `{ "name": string }` — **sem validação Zod** no estado atual.
+- **Pipeline:** `userIsAuthenticated` → `isAdminRole` → `validateSchema(createCategorySchema)` → `CreateCategoryController` → `CreateCategoryService`.
+
+| Campo | Regras (`categorySchema.ts`) |
+|--------|------------------------------|
+| `name` | string; mínimo **2** após `trim` (mensagem Zod menciona 3 caracteres — alinhar regra/mensagem). |
+
 - **Sucesso `201`:** `{ id, name, createdAt }`.
+- **Validação:** `400` — `{ "error": "Erro de validação!", "details": [ { "message": "..." } ] }`.
 - **Sem permissão / usuário inexistente:** `401` — `"Usuário não tem permissão!"`.
 - **Falha persistência:** `400` — `"Erro ao criar categoria!"`.
 
@@ -232,7 +238,8 @@ backend/
 │   │   ├── userIsAuthenticated.ts
 │   │   └── isAdminRole.ts           # RBAC ADMIN
 │   ├── schemas/
-│   │   └── userSchema.ts
+│   │   ├── userSchema.ts
+│   │   └── categorySchema.ts      # createCategorySchema
 │   ├── controllers/
 │   │   ├── user/
 │   │   │   ├── CreateUserController.ts
@@ -259,21 +266,23 @@ backend/
 **Feito**
 - Modelagem relacional + migração inicial.
 - Express 5, TypeScript estrito, CORS, JSON parser.
-- Validação Zod (`createUserSchema`, `authUserSchema`) e middleware reutilizável.
+- Validação Zod (`createUserSchema`, `authUserSchema`, `createCategorySchema`) e middleware reutilizável.
 - Prisma 7, client em `src/generated/prisma`, adapter **`pg`**.
 - **`POST /users`** — persistência, unicidade de e-mail, hash bcrypt.
 - **`POST /session`** — login com `bcrypt.compare` + JWT (1h).
 - **`GET /me`** — perfil do usuário autenticado (qualquer role).
-- **`POST /category`** — criação de categoria (JWT + `ADMIN`).
+- **`POST /category`** — criação de categoria (JWT + `ADMIN` + `createCategorySchema`).
 - Middleware `userIsAuthenticated`, `isAdminRole` e tipagem `Request.user_id`.
+- Validação Zod em `POST /category` (`createCategorySchema`).
 
 **Em progresso**
-- Validação Zod para `POST /category`.
 - RBAC em demais rotas de domínio (produtos, pedidos, itens) quando existirem endpoints.
 - Padronização de status HTTP (`201` em `/users`, `403` vs `401` em autorização, `404` para não encontrado).
 - Refresh token, revogação e rotação de `JWT_SECRET`.
 - Consistência de imports ESM (sufixo `.js`).
 - `return` explícito em `userIsAuthenticated` quando token ausente.
+- Alinhar mensagem Zod de categoria (`.min(2)` vs texto “3 caracteres”).
+- Ordem opcional do pipeline: validar `body` antes de `isAdminRole` (fail-fast sem consulta ao banco).
 
 **Pendente (domínio)**
 - Endpoints HTTP para produtos, pedidos e itens.
@@ -288,5 +297,5 @@ backend/
 - **Adapter `pg`:** client desacoplado do driver; pool e políticas por ambiente.
 - **JWT:** `sub` = id do usuário; payload inclui `name` e `email`; expiração fixa **1h**; sem refresh/blacklist no momento; `role` não está no token — autorização admin consulta o banco por request.
 - **Rotas protegidas:** identidade via `req.user_id` após `verify`; autorização por papel apenas onde `isAdminRole` está encadeado (hoje só `/category`).
-- **Validação:** schemas Zod por rota onde aplicável; categoria aceita `body` sem schema (débito consciente).
+- **Validação:** schemas Zod por rota (`userSchema`, `categorySchema`); em `/category` o Zod roda após auth/RBAC (trade-off: corpo inválido ainda consome JWT + lookup no banco).
 - **Imports ESM:** mistura de imports com e sem sufixo `.js` entre módulos locais — alinhar em refatoração futura.
