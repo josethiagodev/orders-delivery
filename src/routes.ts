@@ -1,35 +1,45 @@
 import { Router } from "express";
 
-// Controller
+// Controllers User
 import { CreateUserController } from "./controllers/user/CreateUserController.js";
 import { AuthUserController } from "./controllers/user/AuthUserController.js";
 import { DetailUserController } from "./controllers/user/DetailUserController.js";
 
+// Controllers Category
+import { CreateCategoryController } from "./controllers/category/CreateCategoryController.js";
+
 // Validação (Middlewares)
 import { validateSchema } from "./middlewares/validateSchema.js";
 import { userIsAuthenticated } from "./middlewares/userIsAuthenticated.js";
-
 import { createUserSchema, authUserSchema } from "./schemas/userSchema.js";
 
 
 const router = Router();
 
-// ROTA => Criar Usuário (POST)
+
+// ROTA POST => Criar usuário
 router.post(
     "/users", 
     validateSchema(createUserSchema), new CreateUserController().handle
 );
 
-// ROTA => Fazer login por sessão (POST)
+// ROTA POST => Fazer login por sessão
 router.post(
     "/session", 
     validateSchema(authUserSchema), new AuthUserController().handle
 );
 
-// ROTA => Buscar dados do usuário logado (GET)
+// ROTA GET => Buscar dados do usuário logado
 router.get(
     "/me",
     userIsAuthenticated, new DetailUserController().handle
+);
+
+
+// ROTA POST => Criar uma categoria
+router.post(
+    "/category", 
+    userIsAuthenticated, new CreateCategoryController().handle
 );
 
 export { router };
