@@ -8,11 +8,14 @@ import { DetailUserController } from "./controllers/user/DetailUserController.js
 // Controllers Category
 import { CreateCategoryController } from "./controllers/category/CreateCategoryController.js";
 
-// Validação (Middlewares)
+// Validação + Autenticação (Middlewares)
 import { validateSchema } from "./middlewares/validateSchema.js";
 import { userIsAuthenticated } from "./middlewares/userIsAuthenticated.js";
 import { isAdminRole } from "./middlewares/isAdminRole.js";
+
+// Schemas Data
 import { createUserSchema, authUserSchema } from "./schemas/userSchema.js";
+import { createCategorySchema } from "./schemas/categorySchema.js";
 
 
 const router = Router();
@@ -42,6 +45,7 @@ router.post(
     "/category", 
     userIsAuthenticated, 
     isAdminRole, 
+    validateSchema(createCategorySchema),
     new CreateCategoryController().handle
 );
 
