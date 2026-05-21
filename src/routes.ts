@@ -11,6 +11,7 @@ import { CreateCategoryController } from "./controllers/category/CreateCategoryC
 // Validação (Middlewares)
 import { validateSchema } from "./middlewares/validateSchema.js";
 import { userIsAuthenticated } from "./middlewares/userIsAuthenticated.js";
+import { isAdminRole } from "./middlewares/isAdminRole.js";
 import { createUserSchema, authUserSchema } from "./schemas/userSchema.js";
 
 
@@ -39,7 +40,9 @@ router.get(
 // ROTA POST => Criar uma categoria
 router.post(
     "/category", 
-    userIsAuthenticated, new CreateCategoryController().handle
+    userIsAuthenticated, 
+    isAdminRole, 
+    new CreateCategoryController().handle
 );
 
 export { router };
