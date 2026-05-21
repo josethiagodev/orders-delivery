@@ -1,49 +1,59 @@
 # BACKEND JS — Orders Delivery
 
-Uma API com features e recursos **pedidos, cardápio, usuários com hash, sessões** (fluxo restaurante → balcão de mesa) desenvolvida com ecossistema Javascript.
+Uma API desenvolvida com o ecossistema Javascript:
+**pedidos, cardápio, usuários com hash e sessão JWT** (fluxo > restaurante → balcão de mesa).
 
-| **Modelo de dados**
-PostgreSQL via Prisma: usuários, categorias, produtos, pedidos e itens.
+**Modelo de dados**
+- PostgreSQL via Prisma: usuários, categorias, produtos, pedidos e itens. |
 
-**HTTP implementado** 
-`POST /users` (persistência real) e `POST /session` (**esboço** de login, sem token/sessão).
+**HTTP implementado**
+- `POST /users`, `POST /session` (JWT), `GET /me`, `POST /category` (rota protegida/privada). |
 
 **Domínio cardápio/pedido**
-Modelos e tabelas prontos.
+- Tabelas completas; endpoint HTTP apenas para **categoria** (criação). Produtos, pedidos e itens ainda sem rotas. |
 
-Público-alvo desta documentação: **Tech Lead**, **Desenvolvedor Sênior** e **Arquiteto de Software**.
+**Autenticação**
+- jsonwebtoken` + middleware `userIsAuthenticated` (Bearer); |
+
+**HTTP implementado** 
+- `POST /users` (persistência real) e `POST /session`.
 
 ---
 
 
-## STACK
+## STACKS USADAS
 
 | Camada | Tecnologia | Uso no repositório |
-|--------|------------|-------------------|
+
 | Runtime | Node.js | `type: "module"` (ESM). |
 | HTTP | Express 5 | App, JSON body, roteador central, handler de erro global. |
 | Linguagem | TypeScript 6 | `strict` e opções adicionais em `tsconfig.json`. |
 | Execução dev | tsx | `tsx watch --env-file=.env src/server.ts` — carrega `.env` no processo da API. |
 | ORM | Prisma 7 | Schema, migrações, client gerado. |
-| Client DB | `pg` + `@prisma/adapter-pg` | Pool/driver nativo; `PrismaClient` instanciado com adapter em `src/prisma/index.ts`. |
+| Client Database (DB) | `pg` + `@prisma/adapter-pg` | Pool/driver nativo; `PrismaClient` instanciado com adapter em `src/prisma/index.ts`. |
 | Banco | PostgreSQL | Datasource; URL em `prisma.config.ts` e runtime. |
 | Validação | Zod 4 | Schemas por rota; middleware `validateSchema`. |
-| Segurança (senha) | bcrypt | Hash na criação de usuário (`CreateUserService`), custo **8**. |
+| Segurança (senha) | bcrypt | Hash na criação (`CreateUserService`); `compare` no login (`AuthUserService`). |
+| Auth | jsonwebtoken | Emissão em `/session`; verificação em `userIsAuthenticated`. |
 | Config/CLI | dotenv | `import "dotenv/config"` em `prisma.config.ts` para comandos Prisma (migração, generate). |
 | CORS | cors | Middleware global em `src/server.ts`. |
 
-Tipagens de desenvolvimento: 
-`@types/node`, `@types/express`, `@types/cors`, `@types/pg`, `@types/bcrypt`.
+Tipagens (TS) de desenvolvimento:
+`@types/node`, `@types/express`, `@types/cors`, `@types/pg`, `@types/bcrypt`, `@types/jsonwebtoken`.
 
 ---
+
 
 ## ARQUITETURA HTTP
 
-Fluxo padrão: 
-**Rota → Validação (Zod) → Controller → Service → Prisma (quando aplicável)**.
-R[routes] --> V[validateSchema Zod] --> C[controllers] --> S[services] --> P[PrismaClient]
+**Rotas públicas (com validação Zod quando aplicável):**
+`Rota → validateSchema → Controller → Service → Prisma`
+
+**Rotas privadas:**
+`Rota → userIsAuthenticated (JWT Bearer) → Controller → Service → Prisma`
 
 ---
+
 
 ## PRÉ-REQUISITOS
 
@@ -52,6 +62,7 @@ R[routes] --> V[validateSchema Zod] --> C[controllers] --> S[services] --> P[Pri
 - Arquivo `.env` na raiz do backend (não versionado).
 
 ---
+
 
 ## CONFIGURAÇÃO
 
@@ -63,23 +74,26 @@ npm install
 
 
 ### 2. Variáveis de ambiente
+
 Crie `.env` na raiz deste pacote. Exemplo com placeholders:
 
 ```env
 DATABASE_URL="postgresql://USUARIO:SENHA@HOST:5432/NOME_DO_BANCO"
 PORT=3333
+JWT_SECRET="sua-chave-secreta-forte-aqui"
 ```
 
-- **`DATABASE_URL`:** 
-Lida em runtime por `src/prisma/index.ts` e pela CLI Prisma via `prisma.config.ts` (que usa `dotenv/config`).
-- **`PORT`:** 
-`src/server.ts` usa `process.env.PORT` com fallback **3333**.
+| Variável | Uso |
+|----------|-----|
+| `DATABASE_URL` | Runtime em `src/prisma/index.ts`; CLI Prisma via `prisma.config.ts` (`dotenv/config`). |
+| `PORT` | `src/server.ts` — fallback **3333**. |
+| `JWT_SECRET` | Assinatura e `verify` em `AuthUserService` e `userIsAuthenticated`. Obrigatória para `/session`, `/me` e `/category`. |
 
-**Dupla origem de env:** 
-em desenvolvimento, o script `dev` injeta o mesmo arquivo com `--env-file=.env` (tsx); o Prisma em CLI carrega variáveis via `prisma.config.ts` + dotenv. Mantenha um único `.env` na raiz para evitar divergência.
+**Dupla origem de env:** o script `dev` injeta `.env` com `--env-file` (tsx); a CLI Prisma carrega via `prisma.config.ts` + dotenv. Mantenha um único `.env` na raiz.
 
 
-### 3. PRISMA: generate e migrações
+### 3. PRISMA (generate e migrate)
+
 O client é gerado em **`src/generated/prisma`** (`output` no `schema.prisma`).
 
 ```bash
@@ -87,13 +101,14 @@ npx prisma generate
 ```
 
 Aplicar schema ao banco:
+
 - **Desenvolvimento:** `npx prisma migrate dev`
 - **CI / deploy:** `npx prisma migrate deploy`
 
-Migração inicial: 
-`prisma/migrations/20260512205022_init/`.
+Migração inicial: `prisma/migrations/20260512205022_init/`.
 
 ---
+
 
 ## EXECUTAR SERVIDOR
 
@@ -110,42 +125,70 @@ Domínio: **cardápio** (categoria → produto) e **pedido** (pedido → itens).
 
 | Modelo | Tabela | O que importa no desenho |
 |--------|--------|-------------------------|
-| **User** | `users` | UUID; `email` único; `password` persistido como hash (app); `Role` `STAFF` \| `ADMIN` (default `STAFF`); timestamps. |
-| **Category** | `categories` | Nome; <1:N> com produtos. |
-| **Product** | `products` | FK `category_id` com `ON DELETE CASCADE`; `price` inteiro em **centavos**; `description`, `banner`; `disabled` — `true` = fora do cardápio (default `false`). |
-| **Order** | `orders` | `table` (mesa); `status` bool — `false` pendente / `true` pronto; `draft` bool — `false` rascunho / `true` enviado à cozinha (default `true` no banco; semântica e nome legados, ver comentários no schema); `name` opcional. |
-| **Item** | `items` | `amount`; FKs `order_id` e `product_id` com CASCADE. No Prisma: relação `Order.itens` → `@map("items")`. |
+| **User** | `users` | UUID; `email` único; `password` como hash (app); `Role` `STAFF` \| `ADMIN` (default `STAFF`); timestamps. |
+| **Category** | `categories` | Nome; 1:N com produtos. |
+| **Product** | `products` | FK `category_id` com `ON DELETE CASCADE`; `price` em **centavos**; `description`, `banner`; `disabled` — `true` = fora do cardápio (default `false`). |
+| **Order** | `orders` | `table` (mesa); `status` bool — `false` pendente / `true` pronto; `draft` bool — semântica legada no schema (ver comentários em `schema.prisma`); `name` opcional. |
+| **Item** | `items` | `amount`; FKs `order_id` e `product_id` com CASCADE. Relação Prisma `Order.itens` → `@map("items")`. |
 
 ---
+
 
 ## API
 
 ### Validação (comum)
-- Middleware `validateSchema`: valida `body`, `query` e `params` contra o schema Zod da rota.
-- **Erro Zod:** `400` com corpo `{ "error": "Erro de validação!", "details": [ { "message": "..." } ] }`.
 
+- Middleware `validateSchema`: valida `body`, `query` e `params` contra o schema Zod da rota.
+- **Erro Zod:** `400` — `{ "error": "Erro de validação!", "details": [ { "message": "..." } ] }`.
+
+### Autenticação (rotas protegidas)
+
+- Header: `Authorization: Bearer <token>`.
+- Middleware `userIsAuthenticated`: `jwt.verify` com `JWT_SECRET`; define `req.user_id` a partir do claim `sub` (id do usuário).
+- **401** — `{ "error": "Token não fornecido!" }` ou `{ "error": "Token inválido!" }`.
+
+---
 
 ### `POST /users`
+
 - **Pipeline:** `validateSchema(createUserSchema)` → `CreateUserController` → `CreateUserService`.
-- **Corpo (JSON):**
 
-| Campo | Regras (conforme `userSchema.ts`) |
-|--------|-------------------------------------|
-| `name` | string, mínimo **3** caracteres após `trim`. |
-| `email` | `z.email`, regex adicional (caracteres em minúsculas no local-part conforme regex), `trim`, `toLowerCase`. |
-| `password` | string, mínimo **6** caracteres, `trim` (sem `toLowerCase` obrigatório; sem regra de “obrigar dígito + letra” no Zod atual). |
+| Campo | Regras (`userSchema.ts`) |
+|--------|---------------------------|
+| `name` | string, mínimo **3** após `trim`. |
+| `email` | `z.email`, regex (minúsculas no local-part), `trim`, `toLowerCase`. |
+| `password` | string, mínimo **6**, `trim`. |
 
-- **Sucesso:** `CreateUserService` verifica e-mail duplicado (`findFirst`), aplica **`bcrypt.hash`**, persiste com **`prisma.user.create`** e devolve JSON com `id`, `name`, `email`, `role`, `createdAt` (sem `password`). O controller usa **`res.json(...)`** sem status explícito ⇒ **200** padrão do Express (não **201**; evolução possível em PR futuro).
-- **Conflito:** e-mail já existente ⇒ `throw new Error("O usuário já existe!")` ⇒ tratado pelo handler global (vide abaixo).
-
+---
 
 ### `POST /session`
-- **Intenção:** login “por sessão” (comentário na rota); implementação ainda **não** persiste sessão nem emite JWT/cookie.
-- **Pipeline:** `validateSchema(authUserSchema)` → `AuthUserController` → `AuthUserService`.
-- **Corpo:** mesmas regras gerais de `email` e `password` que em `authUserSchema` (espelha validação de login).
-- **Comportamento atual:** serviço faz `console.log` e retorna string fixa **`"Usuário LOGADO"`** em JSON. **Roadmap típico:** comparar hash com `bcrypt.compare`, JWT ou sessão server-side, refresh, revogação — definir com produto/segurança.
 
-### Handler global de erros (`src/server.ts`)
+- **Auth:** não.
+- **Pipeline:** `validateSchema(authUserSchema)` → `AuthUserController` → `AuthUserService`.
+- **Corpo:** `email` e `password` (mesmas regras de `authUserSchema`).
+
+- **Sucesso `200`:** `{ id, name, email, role, token }`.
+  - Token JWT: payload `{ name, email }`, **`subject`** = `user.id`, `expiresIn: "1h"`, secret `JWT_SECRET`.
+- **Falha de credenciais:** `400` — `"Email/Senha é obrigatório"` (usuário inexistente ou senha incorreta — mensagem única).
+
+---
+
+### `GET /me`
+
+- **Auth:** Bearer JWT.
+- **Pipeline:** `userIsAuthenticated` → `DetailUserController` → `DetailUserService`.
+- **Sucesso `200`:** `{ id, name, email, role, createdAt }`.
+- **Usuário inexistente:** `400` — `"Usuário não encontrado!"`.
+
+---
+
+### `POST /category`
+
+- **Auth:** Bearer JWT.
+- **Pipeline:** `userIsAuthenticated` → `CreateCategoryController` → `CreateCategoryService`.
+- **Corpo:** `{ "name": string }` — **sem validação Zod** no estado atual.
+- **Sucesso `201`:** `{ id, name, createdAt }`.
+- **Falha persistência:** `400` — `"Erro ao criar categoria!"`.
 
 ---
 
@@ -154,26 +197,35 @@ Domínio: **cardápio** (categoria → produto) e **pedido** (pedido → itens).
 
 ```
 backend/
-├── prisma.config.ts              # defineConfig Prisma: schema, migrations, datasource URL
+├── prisma.config.ts
 ├── prisma/
 │   ├── schema.prisma
 │   └── migrations/
 ├── src/
 │   ├── server.ts
 │   ├── routes.ts
-│   ├── prisma/
-│   │   └── index.ts              # PrismaClient + adapter pg
-│   ├── generated/prisma/         # client gerado (não editar à mão)
+│   ├── @types/express/index.d.ts    # Request.user_id
+│   ├── prisma/index.ts
+│   ├── generated/prisma/            # client gerado (não editar)
 │   ├── middlewares/
-│   │   └── validateSchema.ts
+│   │   ├── validateSchema.ts
+│   │   └── userIsAuthenticated.ts
 │   ├── schemas/
-│   │   └── userSchema.ts         # createUserSchema, authUserSchema
-│   ├── controllers/user/
-│   │   ├── CreateUserController.ts
-│   │   └── AuthUserController.ts
-│   └── services/user/
-│       ├── CreateUserService.ts
-│       └── AuthUserService.ts
+│   │   └── userSchema.ts
+│   ├── controllers/
+│   │   ├── user/
+│   │   │   ├── CreateUserController.ts
+│   │   │   ├── AuthUserController.ts
+│   │   │   └── DetailUserController.ts
+│   │   └── category/
+│   │       └── CreateCategoryController.ts
+│   └── services/
+│       ├── user/
+│       │   ├── CreateUserService.ts
+│       │   ├── AuthUserService.ts
+│       │   └── DetailUserService.ts
+│       └── category/
+│           └── CreateCategoryService.ts
 ├── package.json
 └── tsconfig.json
 ```
@@ -184,24 +236,32 @@ backend/
 ## ESTADO DO PROJETO
 
 **Feito**
-- Modelagem relacional + migração inicial alinhada ao schema.
+- Modelagem relacional + migração inicial.
 - Express 5, TypeScript estrito, CORS, JSON parser.
-- Validação centralizada com Zod e middleware reutilizável.
-- Prisma 7, output customizado em `src/generated/prisma`, adapter **`pg`**.
-- **`POST /users`** com persistência, unicidade de e-mail e hash de senha.
+- Validação Zod (`createUserSchema`, `authUserSchema`) e middleware reutilizável.
+- Prisma 7, client em `src/generated/prisma`, adapter **`pg`**.
+- **`POST /users`** — persistência, unicidade de e-mail, hash bcrypt.
+- **`POST /session`** — login com `bcrypt.compare` + JWT (1h).
+- **`GET /me`** — perfil do usuário autenticado.
+- **`POST /category`** — criação de categoria (rota protegida).
+- Middleware `userIsAuthenticated` e tipagem `Request.user_id`.
 
-**Em progresso / esboço**
-- **`POST /session`:** contrato HTTP e validação prontos; lógica de autenticação e sessão ainda placeholder.
 
-**Não iniciado (exemplos)**
-- Rotas HTTP para categorias, produtos, pedidos e itens.
-- Health check, versionamento de API, métricas, rate limit.
+**Em progresso**
+- Validação Zod para `POST /category`.
+- RBAC por `role` (`ADMIN` vs `STAFF`) em rotas de domínio.
+- Padronização de status HTTP (ex.: `201` em `/users`, `404` para não encontrado).
+- Refresh token, revogação e rotação de `JWT_SECRET`.
+- Consistência de imports ESM (sufixo `.js`).
 
 ---
 
 
 ## DECISÕES TÉCNICAS
-- **Prisma 7:** URL do datasource concentrada em **`prisma.config.ts`**, não no bloco `datasource` do `schema.prisma` além do `provider`.
-- **Adapter `pg`:** desacopla o client do driver; facilita políticas de pool e ambientes que exigem driver nativo.
-- **Validação:** um middleware recebe schemas Zod distintos por rota (`createUserSchema`, `authUserSchema`).
-- **Consistência de imports:** parte do código ainda importa módulos locais **sem** sufixo `.js` (ex.: `AuthUserController` → `AuthUserService`, `CreateUserService` → `prisma`).
+
+- **Prisma 7:** URL do datasource em **`prisma.config.ts`**, não no bloco `datasource` do `schema.prisma` além do `provider`.
+- **Adapter `pg`:** client desacoplado do driver; pool e políticas por ambiente.
+- **JWT:** `sub` = id do usuário; payload inclui `name` e `email`; expiração fixa **1h**; sem refresh/blacklist no momento.
+- **Rotas protegidas:** identidade propagada via `req.user_id` após `verify`; autenticação sem autorização por papel ainda.
+- **Validação:** schemas Zod por rota onde aplicável; categoria aceita `body` sem schema (débito consciente).
+- **Imports ESM:** mistura de imports com e sem sufixo `.js` entre módulos locais — alinhar em refatoração futura.
