@@ -1,6 +1,8 @@
 # BACKEND JS — Orders Delivery
 
-Uma API desenvolvida a partir do ecossistema Javascript com o fluxo (restaurante → balcão de mesa).
+- Sistema backend (API) para o gerenciamento de comércios/deliverys com pedidos em balcão de mesa.
+- Node.js com TypeScript + Express (framework web).
+- Prisma ORM (comunicação com banco de dados PostgreSQL) + Zod (validação de dados).
 
 **Features**
 - Pedidos, Cardápio (categorias e produtos), usuários com hash e sessão JWT.
@@ -33,7 +35,7 @@ Uma API desenvolvida a partir do ecossistema Javascript com o fluxo (restaurante
 | Client Database (DB) | `pg` + `@prisma/adapter-pg` | Pool/driver nativo; `PrismaClient` instanciado com adapter em `src/prisma/index.ts`. |
 | Banco | PostgreSQL | Datasource; URL em `prisma.config.ts` e runtime. |
 | Validação | Zod 4 | Schemas por rota; middleware `validateSchema`. |
-| Segurança (senha) | bcrypt | Hash na criação (`CreateUserService`, rounds **8**); `compare` no login (`AuthUserService`). |
+| Segurança (senha) | bcrypt | Hash na criação (`CreateUserService`); `compare` no login (`AuthUserService`). |
 | Auth | jsonwebtoken | Emissão em `/session`; verificação em `userIsAuthenticated`. |
 | Config/CLI | dotenv | `import "dotenv/config"` em `prisma.config.ts` para comandos Prisma (migração, generate). |
 | CORS | cors | Middleware global em `src/server.ts`. |
