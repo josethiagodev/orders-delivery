@@ -7,6 +7,7 @@ import { DetailUserController } from "./controllers/user/DetailUserController.js
 
 // Controllers Category
 import { CreateCategoryController } from "./controllers/category/CreateCategoryController.js";
+import { ListAllCategoryController } from "./controllers/category/ListAllCategoryController.js";
 
 // Validação + Autenticação (Middlewares)
 import { validateSchema } from "./middlewares/validateSchema.js";
@@ -18,29 +19,34 @@ import { createUserSchema, authUserSchema } from "./schemas/userSchema.js";
 import { createCategorySchema } from "./schemas/categorySchema.js";
 
 
-const router = Router();
+export const router = Router();
 
 
-// ROTA POST => Criar usuário
+// ** ROTAS > USERS ** //
+
+// POST => Criar usuário
 router.post(
     "/users", 
     validateSchema(createUserSchema), new CreateUserController().handle
 );
 
-// ROTA POST => Fazer login por sessão
+// POST => Fazer login por sessão
 router.post(
     "/session", 
     validateSchema(authUserSchema), new AuthUserController().handle
 );
 
-// ROTA GET => Buscar dados do usuário logado
+// GET => Buscar dados do usuário logado
 router.get(
     "/me",
     userIsAuthenticated, new DetailUserController().handle
 );
 
 
-// ROTA POST => Criar uma categoria
+
+// ** ROTAS > CATEGORIES ** //
+
+// POST => Criar uma categoria
 router.post(
     "/category", 
     userIsAuthenticated, 
@@ -49,4 +55,9 @@ router.post(
     new CreateCategoryController().handle
 );
 
-export { router };
+// GET => Listar todas categorias
+router.get(
+    "/categoryall",
+    userIsAuthenticated,
+    new ListAllCategoryController().handle
+);
