@@ -9,6 +9,9 @@ import { DetailUserController } from "./controllers/user/DetailUserController.js
 import { CreateCategoryController } from "./controllers/category/CreateCategoryController.js";
 import { ListAllCategoryController } from "./controllers/category/ListAllCategoryController.js";
 
+// Controllers Product
+import { CreateProductController } from "./controllers/product/CreateProductController.js";
+
 // Validação + Autenticação (Middlewares)
 import { validateSchema } from "./middlewares/validateSchema.js";
 import { userIsAuthenticated } from "./middlewares/userIsAuthenticated.js";
@@ -22,7 +25,7 @@ import { createCategorySchema } from "./schemas/categorySchema.js";
 export const router = Router();
 
 
-// ** ROTAS > USERS ** //
+// ** ROTA USERS ** //
 
 // POST => Criar usuário
 router.post(
@@ -44,7 +47,7 @@ router.get(
 
 
 
-// ** ROTAS > CATEGORIES ** //
+// ** ROTAS CATEGORIES ** //
 
 // POST => Criar uma categoria
 router.post(
@@ -60,4 +63,16 @@ router.get(
     "/categoryall",
     userIsAuthenticated,
     new ListAllCategoryController().handle
+);
+
+
+
+// ** ROTAS PRODUCTS ** //
+
+// POST => Criar um produto
+router.post(
+    "/product", 
+    userIsAuthenticated, 
+    isAdminRole, 
+    new CreateProductController().handle
 );
