@@ -1,6 +1,6 @@
 # BACKEND JS — Orders Delivery
 
-- Sistema backend (API) para o gerenciamento de comércios/deliverys com pedidos em balcão de mesa.
+- Backend para gerenciar os pedidos dos clientes via balcão de mesa para comércios locais e deliverys online.
 - Node.js com TypeScript + Express (framework web).
 - Prisma ORM (comunicação com banco de dados PostgreSQL) + Zod (validação de dados).
 

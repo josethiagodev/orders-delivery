@@ -1,4 +1,8 @@
-import { Router } from "express";
+import { Router } from "express"
+import multer from "multer"
+
+// Config Multer
+import uploadConfig from "../src/config/multer";
 
 // Controllers User
 import { CreateUserController } from "./controllers/user/CreateUserController.js";
@@ -23,9 +27,10 @@ import { createCategorySchema } from "./schemas/categorySchema.js";
 
 
 export const router = Router();
+const uploadFiles = multer(uploadConfig);
 
 
-// ** ROTA USERS ** //
+// ## ROTA USERS ## //
 
 // POST => Criar usuário
 router.post(
@@ -47,7 +52,7 @@ router.get(
 
 
 
-// ** ROTAS CATEGORIES ** //
+// ## ROTAS CATEGORIES ## //
 
 // POST => Criar uma categoria
 router.post(
@@ -67,12 +72,13 @@ router.get(
 
 
 
-// ** ROTAS PRODUCTS ** //
+// ## ROTAS PRODUCTS ## //
 
 // POST => Criar um produto
 router.post(
     "/product", 
     userIsAuthenticated, 
     isAdminRole, 
+    uploadFiles.single('file'),
     new CreateProductController().handle
 );
