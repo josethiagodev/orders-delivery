@@ -24,6 +24,7 @@ import { isAdminRole } from "./middlewares/isAdminRole.js";
 // Schemas Data
 import { createUserSchema, authUserSchema } from "./schemas/userSchema.js";
 import { createCategorySchema } from "./schemas/categorySchema.js";
+import { createProductSchema } from "./schemas/productSchema";
 
 
 export const router = Router();
@@ -80,5 +81,6 @@ router.post(
     userIsAuthenticated, 
     isAdminRole, 
     uploadFiles.single('file'),
+    validateSchema(createProductSchema),
     new CreateProductController().handle
 );
