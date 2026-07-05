@@ -13,11 +13,12 @@
 **HTTP implementado**
 - `POST /users`, `POST /session` (JWT), `GET /me`, `POST /category` (JWT + role `ADMIN` + Zod).
 - `GET /categoryall` (JWT — listagem de categorias).
-- `POST /product` (JWT + `ADMIN` + multipart + upload Cloudinary).
+- `POST /product` (JWT + `ADMIN` + multipart + Zod + upload Cloudinary).
+- `GET /products` (JWT + query `disabled` via Zod — listagem de produtos).
 
 **Domínio cardápio/pedido**
 - Categorias: criação (`POST /category`) e listagem (`GET /categoryall`).
-- Produtos: criação com banner via Cloudinary (`POST /product`). Sem listagem, edição ou desativação ainda.
+- Produtos: criação com banner via Cloudinary (`POST /product`) e listagem com filtro `disabled` (`GET /products`). Pendente edição e desativação.
 - Pedidos e itens: modelados no banco; **sem rotas HTTP**.
 
 **Autenticação e autorização**
@@ -60,11 +61,14 @@ Tipagens (TS) de desenvolvimento:
 **Rotas privadas (qualquer role autenticada):**
 `Rota → userIsAuthenticated (JWT Bearer) → Controller → Service → Prisma`
 
+**Rotas privadas (validação de query — qualquer role autenticada):**
+`Rota → userIsAuthenticated → validateSchema → Controller → Service → Prisma`
+
 **Rotas privadas (role `ADMIN`):**
 `Rota → userIsAuthenticated → isAdminRole → validateSchema → Controller → Service → Prisma`
 
 **Rotas privadas (role `ADMIN` + multipart):**
-`Rota → userIsAuthenticated → isAdminRole → multer.single('file') → Controller → Service → Cloudinary → Prisma`
+`Rota → userIsAuthenticated → isAdminRole → multer.single('file') → validateSchema → Controller → Service → Cloudinary → Prisma`
 
 ---
 
@@ -178,7 +182,7 @@ Domínio: **cardápio** (categoria → produto) e **pedido** (pedido → itens).
 - Exige `role === ADMIN`; caso contrário ou usuário inexistente: **401** — `{ "error": "Usuário não tem permissão!" }`.
 - Hoje a API usa **401** também para negação de papel (convenção REST costuma usar **403** — backlog de padronização).
 - Rotas que usam `isAdminRole`: `POST /category`, `POST /product`.
-- `GET /me`, `GET /categoryall`: qualquer role autenticada (`STAFF` ou `ADMIN`).
+- `GET /me`, `GET /categoryall`, `GET /products`: qualquer role autenticada (`STAFF` ou `ADMIN`).
 
 ---
 
@@ -249,23 +253,40 @@ Domínio: **cardápio** (categoria → produto) e **pedido** (pedido → itens).
 
 - **Auth:** Bearer JWT + role **`ADMIN`** (`isAdminRole`).
 - **Content-Type:** `multipart/form-data` (não JSON).
-- **Pipeline:** `userIsAuthenticated` → `isAdminRole` → `uploadFiles.single('file')` → `CreateProductController` → `CreateProductService` → Cloudinary → Prisma.
+- **Pipeline:** `userIsAuthenticated` → `isAdminRole` → `uploadFiles.single('file')` → `validateSchema(createProductSchema)` → `CreateProductController` → `CreateProductService` → Cloudinary → Prisma.
 
-| Campo | Origem | Regras |
-|--------|--------|--------|
+| Campo | Origem | Regras (`productSchema.ts`) |
+|--------|--------|----------------------------|
 | `file` | multipart | Obrigatório; JPEG/JPG/PNG; máx. **4 MB**. |
-| `name` | body | string (sem Zod hoje). |
-| `price` | body | convertido com `Number()` — persistido em **centavos** (`Int`). |
-| `description` | body | string. |
-| `category_id` | body | UUID; categoria deve existir. |
+| `name` | body | string, mínimo **2** após `trim`. |
+| `price` | body | string (multipart), mínimo **1**, `trim` — coercido com `Number()` no service; persistido em **centavos** (`Int`). |
+| `description` | body | string, mínimo **1** após `trim`. |
+| `category_id` | body | string, `trim`; categoria deve existir no banco. |
 
 - **Upload:** Multer (`memoryStorage`) → Cloudinary (`folder: "products"`) → `banner` = `secure_url`.
 - **Sucesso `201`:** `{ id, name, price, description, category_id, banner, createdAt }`.
+- **Validação:** `400` — `{ "error": "Erro de validação!", "details": [ { "message": "..." } ] }`.
 - **Sem imagem:** `400` — `"A imagem do produto é obrigatória!"`.
 - **Categoria inexistente:** `400` — `"Categoria não encontrada!"`.
 - **Falha upload:** `400` — `"Erro ao fazer upload da imagem!"`.
 - **Formato inválido / tamanho:** erro Multer → handler global `400` com mensagem do filtro/limite.
-- **Backlog:** `createProductSchema` (Zod) para campos do body; coerção tipada de `price`.
+- **Backlog:** coerção tipada de `price` (`z.coerce.number()`); risco de `NaN` com `Number()`.
+
+---
+
+### `GET /products`
+
+- **Auth:** Bearer JWT (qualquer role).
+- **Pipeline:** `userIsAuthenticated` → `validateSchema(listProductsSchema)` → `ListAllProductsController` → `ListAllProductsService`.
+
+| Param | Regras (`productSchema.ts`) |
+|--------|----------------------------|
+| `disabled` | `"true"` ou `"false"`; opcional; default `"false"`; `.strict()` rejeita query params desconhecidos |
+
+- **Sucesso `200`:** `[ { id, name, price, description, banner, disabled, category_id, createdAt, category: { id, name } }, ... ]` — ordenado por `name` desc.
+- **Validação:** `400` — `{ "error": "Erro de validação!", "details": [ { "message": "..." } ] }`.
+- **Falha:** `400` — `"Falha ao buscar os produtos!"`.
+- **Backlog:** `listProductsSchema` faz `.transform()` em `disabled`, mas `validateSchema` não injeta o valor parseado em `req` — controller lê `req.query.disabled` como string.
 
 ---
 
@@ -293,7 +314,8 @@ backend/
 │   │   └── isAdminRole.ts           # RBAC ADMIN
 │   ├── schemas/
 │   │   ├── userSchema.ts
-│   │   └── categorySchema.ts      # createCategorySchema
+│   │   ├── categorySchema.ts      # createCategorySchema
+│   │   └── productSchema.ts       # createProductSchema, listProductsSchema
 │   ├── controllers/
 │   │   ├── user/
 │   │   │   ├── CreateUserController.ts
@@ -303,7 +325,8 @@ backend/
 │   │   │   ├── CreateCategoryController.ts
 │   │   │   └── ListAllCategoryController.ts
 │   │   └── product/
-│   │       └── CreateProductController.ts
+│   │       ├── CreateProductController.ts
+│   │       └── ListAllProductsController.ts
 │   └── services/
 │       ├── user/
 │       │   ├── CreateUserService.ts
@@ -313,7 +336,8 @@ backend/
 │       │   ├── CreateCategoryService.ts
 │       │   └── ListAllCategoryService.ts
 │       └── product/
-│           └── CreateProductService.ts
+│           ├── CreateProductService.ts
+│           └── ListAllProductsService.ts
 ├── package.json
 └── tsconfig.json
 ```
@@ -326,29 +350,31 @@ backend/
 **Feito**
 - Modelagem relacional + migração inicial.
 - Express 5, TypeScript estrito, CORS, JSON parser.
-- Validação Zod (`createUserSchema`, `authUserSchema`, `createCategorySchema`) e middleware reutilizável.
+- Validação Zod (`createUserSchema`, `authUserSchema`, `createCategorySchema`, `createProductSchema`, `listProductsSchema`) e middleware reutilizável.
 - Prisma 7, client em `src/generated/prisma`, adapter **`pg`**.
 - **`POST /users`** — persistência, unicidade de e-mail, hash bcrypt.
 - **`POST /session`** — login com `bcrypt.compare` + JWT (1h).
 - **`GET /me`** — perfil do usuário autenticado (qualquer role).
 - **`POST /category`** — criação de categoria (JWT + `ADMIN` + `createCategorySchema`).
 - **`GET /categoryall`** — listagem de categorias (JWT, qualquer role).
-- **`POST /product`** — criação de produto com upload Multer + Cloudinary (JWT + `ADMIN`).
+- **`POST /product`** — criação de produto com upload Multer + Cloudinary (JWT + `ADMIN` + `createProductSchema`).
+- **`GET /products`** — listagem de produtos com filtro `disabled` (JWT + `listProductsSchema`).
 - Config `multer` (memória, 4 MB, filtro MIME) e `cloudinary`.
 - Middleware `userIsAuthenticated`, `isAdminRole` e tipagem `Request.user_id`.
-- Validação Zod em `POST /category` (`createCategorySchema`).
 
 **Em progresso**
 - RBAC em demais rotas de domínio (pedidos, itens) quando existirem endpoints.
-- Schema Zod para `POST /product` (`createProductSchema`).
-- Listagem, edição e desativação de produtos.
+- Edição e desativação de produtos.
+- Coerção tipada de `price` (`z.coerce.number()` em multipart).
+- `validateSchema` não repassa dados parseados/transformados para `req`.
+- Naming REST: `GET /categoryall` vs `GET /products`.
 - Padronização de status HTTP (`201` em `/users`, `403` vs `401` em autorização, `404` para não encontrado).
 - Refresh token, revogação e rotação de `JWT_SECRET`.
 - Consistência de imports ESM (sufixo `.js`).
 - Padronizar path do import de `multer` em `routes.ts`.
 - `return` explícito em `userIsAuthenticated` quando token ausente.
 - Alinhar mensagem Zod de categoria (`.min(2)` vs texto “3 caracteres”).
-- Ordem opcional do pipeline: validar `body` antes de `isAdminRole` (fail-fast sem consulta ao banco).
+- Ordem opcional do pipeline: validar `body`/`query` antes de `isAdminRole` (fail-fast sem consulta ao banco).
 
 
 ---
@@ -360,7 +386,7 @@ backend/
 - **Adapter `pg`:** client desacoplado do driver; pool e políticas por ambiente.
 - **JWT:** `sub` = id do usuário; payload inclui `name` e `email`; expiração fixa **1h**; sem refresh/blacklist no momento; `role` não está no token — autorização admin consulta o banco por request.
 - **Rotas protegidas:** identidade via `req.user_id` após `verify`; autorização por papel onde `isAdminRole` está encadeado (`POST /category`, `POST /product`).
-- **Validação:** schemas Zod por rota (`userSchema`, `categorySchema`); em `/category` o Zod roda após auth/RBAC (trade-off: corpo inválido ainda consome JWT + lookup no banco). `POST /product` ainda sem Zod.
+- **Validação:** schemas Zod por rota (`userSchema`, `categorySchema`, `productSchema`); em `/category` o Zod roda após auth/RBAC (trade-off: corpo inválido ainda consome JWT + lookup no banco). `POST /product` valida body após multer; `GET /products` valida query após auth (mesmo trade-off com JWT).
 - **Upload de produto:** arquivo não persiste em disco — Multer `memoryStorage` envia buffer direto ao Cloudinary via `upload_stream`; URL pública gravada em `Product.banner`.
 - **Cloudinary:** credenciais exclusivamente via env; pasta `products`; `public_id` com timestamp + nome do arquivo.
 - **Imports ESM:** mistura de imports com e sem sufixo `.js` entre módulos locais — alinhar em refatoração futura.

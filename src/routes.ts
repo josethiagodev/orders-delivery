@@ -15,6 +15,7 @@ import { ListAllCategoryController } from "./controllers/category/ListAllCategor
 
 // Controllers Product
 import { CreateProductController } from "./controllers/product/CreateProductController.js";
+import { ListAllProductsController } from "./controllers/product/ListAllProductsController.js";
 
 // Validação + Autenticação (Middlewares)
 import { validateSchema } from "./middlewares/validateSchema.js";
@@ -24,7 +25,7 @@ import { isAdminRole } from "./middlewares/isAdminRole.js";
 // Schemas Data
 import { createUserSchema, authUserSchema } from "./schemas/userSchema.js";
 import { createCategorySchema } from "./schemas/categorySchema.js";
-import { createProductSchema } from "./schemas/productSchema";
+import { createProductSchema, listProductsSchema } from "./schemas/productSchema";
 
 
 export const router = Router();
@@ -83,4 +84,12 @@ router.post(
     uploadFiles.single('file'),
     validateSchema(createProductSchema),
     new CreateProductController().handle
+);
+
+// GET => Listar todos produtos
+router.get(
+    "/products",
+    userIsAuthenticated,
+    validateSchema(listProductsSchema),
+    new ListAllProductsController().handle
 );
