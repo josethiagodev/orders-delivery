@@ -15,10 +15,12 @@ API REST construída em Node.js e TypeScript para gestão de comércios e delive
 | Área | Estado |
 |------|--------|
 | Modelagem de dados (Prisma + PostgreSQL) | Completa — User, Category, Product, Order, Item |
-| Endpoints HTTP | Parcial — **4 rotas** ativas |
+| Endpoints HTTP | Parcial — **6 rotas** ativas |
 | Autenticação JWT | Implementada (`/session`, `/me`) |
-| RBAC (role `ADMIN`) | Implementado em `POST /category` |
-| Produtos, pedidos e itens | Modelados no banco; **sem rotas HTTP** |
+| RBAC (role `ADMIN`) | Implementado em `POST /category` e `POST /product` |
+| Categorias | Criação (ADMIN) + listagem (`GET /categoryall`, qualquer role autenticada) |
+| Produtos | Parcial — `POST /product` com upload Cloudinary; sem listagem, edição ou desativação |
+| Pedidos e itens | Modelados no banco; **sem rotas HTTP** |
 
 
 ### Público-alvo
@@ -30,7 +32,7 @@ Desenvolvedores que precisam entender a arquitetura, convenções e estado real 
 
 ## Arquitetura
 
-O backend segue uma **arquitetura em camadas horizontais**, organizada por domínio (`user`, `category`). Cada caso de uso possui controller e service dedicados.
+O backend segue uma **arquitetura em camadas horizontais**, organizada por domínio (`user`, `category`, `product`). Cada caso de uso possui controller e service dedicados.
 
 ```mermaid
 flowchart TD
@@ -41,6 +43,7 @@ flowchart TD
   Ctrl --> Svc[Services]
   Svc --> Prisma[prismaClient]
   Prisma --> DB[(PostgreSQL)]
+  Svc --> Cloudinary[Cloudinary CDN]
   Svc -->|throw Error| ErrHandler[Error middleware global]
   MW -->|ZodError| ValErr[400 validação]
   MW -->|JWT ou RBAC fail| AuthErr[401]
@@ -53,7 +56,8 @@ flowchart TD
 |--------|------------------|-----------|
 | **Routes** | Encadeia middlewares e vincula handlers | [`src/routes.ts`](./src/routes.ts) |
 | **Controllers** | Extrai dados da requisição, chama service, responde HTTP | Classe com método `handle(req, res)` |
-| **Services** | Regras de negócio, acesso ao banco, bcrypt, JWT | Classe com método `execute(...)` |
+| **Services** | Regras de negócio, acesso ao banco, bcrypt, JWT, upload Cloudinary | Classe com método `execute(...)` |
+| **Config** | Integrações externas (Multer, Cloudinary) | [`src/config/`](./src/config/) |
 | **Middlewares** | Validação Zod, autenticação JWT, autorização RBAC | Funções/factories reutilizáveis |
 | **Schemas** | Contratos de entrada validados com Zod | Um arquivo por domínio |
 
@@ -75,6 +79,11 @@ Rota → userIsAuthenticated → Controller → Service → Prisma
 Rota → userIsAuthenticated → isAdminRole → validateSchema → Controller → Service → Prisma
 ```
 
+**Rotas privadas (role ADMIN + multipart):**
+```
+Rota → userIsAuthenticated → isAdminRole → multer.single('file') → validateSchema → Controller → Service → Cloudinary → Prisma
+```
+
 
 ### Decisões arquiteturais
 
@@ -83,6 +92,7 @@ Rota → userIsAuthenticated → isAdminRole → validateSchema → Controller �
 - **JWT sem `role` no payload:** autorização admin consulta o banco a cada request protegido por `isAdminRole`.
 - **Sem camada de repositório:** services acessam `prismaClient` diretamente.
 - **Sem injeção de dependência:** controllers instanciam services inline.
+- **Upload em memória:** Multer `memoryStorage` envia buffer direto ao Cloudinary; URL pública gravada em `Product.banner`.
 
 
 ### Domínios
@@ -90,8 +100,8 @@ Rota → userIsAuthenticated → isAdminRole → validateSchema → Controller �
 | Domínio | HTTP | Banco |
 |---------|------|-------|
 | `user` | Sim — cadastro, login, perfil | Sim |
-| `category` | Sim — criação (ADMIN) | Sim |
-| `product` | Não | Sim |
+| `category` | Sim — criação (ADMIN) + listagem | Sim |
+| `product` | Parcial — `POST /product` (ADMIN + Cloudinary) | Sim |
 | `order` | Não | Sim |
 | `item` | Não | Sim |
 
@@ -124,6 +134,8 @@ Rota → userIsAuthenticated → isAdminRole → validateSchema → Controller �
 | **jsonwebtoken** | 9.0.3 | Emissão e verificação de JWT |
 | **cors** | 2.8.6 | CORS global |
 | **dotenv** | 17.4.2 | Carregamento de variáveis (CLI Prisma) |
+| **multer** | 2.1.1 | Upload multipart em memória (campo `file`, 4 MB, JPEG/JPG/PNG) |
+| **cloudinary** | 2.10.0 | CDN — upload de banner de produto (pasta `products`) |
 
 
 ### Dependências de desenvolvimento
@@ -139,6 +151,13 @@ Rota → userIsAuthenticated → isAdminRole → validateSchema → Controller �
 | **@types/pg** | ^8.20.0 | Tipagens pg |
 | **@types/bcrypt** | ^6.0.0 | Tipagens bcrypt |
 | **@types/jsonwebtoken** | ^9.0.10 | Tipagens JWT |
+| **@types/multer** | ^2.1.0 | Tipagens Multer |
+
+
+### Pré-requisitos externos
+
+- **PostgreSQL** acessível via `DATABASE_URL`
+- **Conta Cloudinary** — obrigatória para `POST /product` (upload de banner)
 
 
 ### Scripts disponíveis
@@ -178,27 +197,37 @@ backend/
 │   │   └── index.ts            # PrismaClient + adapter pg
 │   ├── generated/
 │   │   └── prisma/             # Client gerado (gitignored)
+│   ├── config/
+│   │   ├── multer.ts           # memoryStorage, 4MB, JPEG/JPG/PNG
+│   │   └── cloudinary.ts       # Credenciais via env
 │   ├── middlewares/
 │   │   ├── validateSchema.ts   # Validação Zod reutilizável
 │   │   ├── userIsAuthenticated.ts  # JWT Bearer
 │   │   └── isAdminRole.ts      # RBAC ADMIN
 │   ├── schemas/
 │   │   ├── userSchema.ts       # createUserSchema, authUserSchema
-│   │   └── categorySchema.ts   # createCategorySchema
+│   │   ├── categorySchema.ts   # createCategorySchema
+│   │   └── productSchema.ts    # createProductSchema
 │   ├── controllers/
 │   │   ├── user/
 │   │   │   ├── CreateUserController.ts
 │   │   │   ├── AuthUserController.ts
 │   │   │   └── DetailUserController.ts
-│   │   └── category/
-│   │       └── CreateCategoryController.ts
+│   │   ├── category/
+│   │   │   ├── CreateCategoryController.ts
+│   │   │   └── ListAllCategoryController.ts
+│   │   └── product/
+│   │       └── CreateProductController.ts
 │   └── services/
 │       ├── user/
 │       │   ├── CreateUserService.ts
 │       │   ├── AuthUserService.ts
 │       │   └── DetailUserService.ts
-│       └── category/
-│           └── CreateCategoryService.ts
+│       ├── category/
+│       │   ├── CreateCategoryService.ts
+│       │   └── ListAllCategoryService.ts
+│       └── product/
+│           └── CreateProductService.ts
 └── dist/                       # Build legado/desatualizado — não usar como referência
 ```
 
@@ -263,7 +292,7 @@ erDiagram
 | `name` | String | Nome do produto |
 | `price` | Int | Valor em **centavos** |
 | `description` | String | Descrição |
-| `banner` | String | URL ou path da imagem |
+| `banner` | String | URL pública do Cloudinary (`secure_url`) |
 | `disabled` | Boolean | Default `false` — ver nota abaixo |
 | `category_id` | UUID | FK → Category, `ON DELETE CASCADE` |
 
@@ -380,6 +409,8 @@ Executa após `userIsAuthenticated`. Consulta o usuário no banco e exige `role 
 
 > A API usa **401** também para negação de papel. A convenção REST costuma reservar **403 Forbidden** para esse caso — backlog de padronização.
 
+Rotas protegidas por `isAdminRole`: `POST /category`, `POST /product`.
+
 
 ### Tipagem Express
 
@@ -392,6 +423,38 @@ declare namespace Express {
   }
 }
 ```
+
+---
+
+## Integrações Externas
+
+Além do PostgreSQL, o backend integra serviços externos para upload de mídia de produtos.
+
+
+### Multer — [`src/config/multer.ts`](./src/config/multer.ts)
+
+| Propriedade | Valor |
+|-------------|-------|
+| Storage | `memoryStorage()` — buffer em memória, sem persistência em disco |
+| Campo | `file` (via `uploadFiles.single('file')` em [`src/routes.ts`](./src/routes.ts)) |
+| Limite | **4 MB** (`fileSize: 4 * 1024 * 1024`) |
+| MIME permitidos | `image/jpeg`, `image/jpg`, `image/png` |
+
+Erros de filtro ou tamanho lançam `Error` com mensagem descritiva → handler global retorna **400**.
+
+
+### Cloudinary — [`src/config/cloudinary.ts`](./src/config/cloudinary.ts)
+
+| Propriedade | Valor |
+|-------------|-------|
+| SDK | `cloudinary` v2 |
+| Credenciais | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` |
+| Upload | `upload_stream` em [`CreateProductService`](./src/services/product/CreateProductService.ts) |
+| Pasta | `products` |
+| `public_id` | `{timestamp}-{nomeArquivo}` (sem extensão) |
+| Persistência | `secure_url` gravada em `Product.banner` |
+
+Fluxo: Multer captura buffer → service envia stream ao Cloudinary → URL retornada → `product.create` no Prisma.
 
 ---
 
@@ -441,9 +504,22 @@ Rota: `POST /category`
 
 | Campo | Regras |
 |-------|--------|
-| `name` | String, mínimo **2** caracteres após `trim` |
+| `name` | String, mínimo **2** caracteres após `trim`; `toLowerCase()`; regex `^[a-z]+$` (somente letras minúsculas) |
 
 **Inconsistência documentada:** a regra usa `.min(2)`, mas a mensagem de erro menciona "Mínimo de **3** caracteres". Alinhar regra e mensagem em refatoração futura.
+
+#### `createProductSchema` — [`src/schemas/productSchema.ts`](./src/schemas/productSchema.ts)
+
+Rota: `POST /product` (campos do body em `multipart/form-data`)
+
+| Campo | Regras |
+|-------|--------|
+| `name` | String, mínimo **2** caracteres, `trim` |
+| `price` | String (multipart), mínimo **1** caractere, `trim` — coercido com `Number()` no service |
+| `description` | String, mínimo **1** caractere, `trim` |
+| `category_id` | String, `trim` |
+
+> Campos multipart chegam como string. `price` ainda não usa `z.coerce.number()` — backlog de coerção tipada.
 
 
 ### Resposta de erro de validação
@@ -460,7 +536,7 @@ Rota: `POST /category`
 
 ### Schemas pendentes
 
-Não existem schemas Zod para Product, Order ou Item — domínios ainda sem endpoints HTTP.
+Não existem schemas Zod para **Order** ou **Item** — domínios ainda sem endpoints HTTP.
 
 ---
 
@@ -477,6 +553,8 @@ Não existem schemas Zod para Product, Order ou Item — domínios ainda sem end
 | POST | `/session` | Não | validate → AuthUser | 200 |
 | GET | `/me` | JWT | userIsAuthenticated → DetailUser | 200 |
 | POST | `/category` | JWT + ADMIN | auth → isAdmin → validate → CreateCategory | 201 |
+| GET | `/categoryall` | JWT | auth → ListAllCategory | 200 |
+| POST | `/product` | JWT + ADMIN | auth → admin → multer → validate → CreateProduct → Cloudinary | 201 |
 
 ---
 
@@ -642,6 +720,95 @@ Cria uma nova categoria no cardápio.
 | 400 | `"Erro de validação!"` + `details` | Body inválido (Zod) |
 | 400 | `"Erro ao criar categoria!"` | Falha na persistência |
 
+---
+
+
+### GET `/categoryall`
+
+Lista todas as categorias do cardápio.
+
+**Auth:** Bearer JWT (qualquer role: `STAFF` ou `ADMIN`).
+
+**Header:** `Authorization: Bearer <token>`
+
+**Pipeline:** `userIsAuthenticated` → `ListAllCategoryController` → `ListAllCategoryService`
+
+**Lógica de negócio:**
+- `findMany` com `select: { id, name, createdAt }`
+- Ordenação por `name` desc
+
+**Sucesso — 200:**
+
+```json
+[
+  { "id": "uuid", "name": "pizzas", "createdAt": "2026-05-23T..." },
+  { "id": "uuid", "name": "bebidas", "createdAt": "2026-05-23T..." }
+]
+```
+
+**Erros:**
+
+| Status | Mensagem | Causa |
+|--------|----------|-------|
+| 401 | `"Token não fornecido!"` / `"Token inválido!"` | Falha de autenticação |
+| 400 | `"Erro ao buscar as categorias!"` | Falha na consulta |
+
+---
+
+
+### POST `/product`
+
+Cria um novo produto com upload de banner via Cloudinary.
+
+**Auth:** Bearer JWT + role **ADMIN**.
+
+**Header:** `Authorization: Bearer <token>`
+
+**Content-Type:** `multipart/form-data` (não JSON)
+
+**Campos:**
+
+| Campo | Origem | Detalhes |
+|-------|--------|----------|
+| `file` | multipart | Obrigatório; JPEG/JPG/PNG; máx. **4 MB** |
+| `name` | body | Validado por `createProductSchema` |
+| `price` | body | String → `Number()` no service; persistido em **centavos** (`Int`) |
+| `description` | body | Validado por `createProductSchema` |
+| `category_id` | body | UUID; categoria deve existir no banco |
+
+**Pipeline:** `userIsAuthenticated` → `isAdminRole` → `uploadFiles.single('file')` → `validateSchema(createProductSchema)` → `CreateProductController` → `CreateProductService` → Cloudinary → Prisma
+
+**Lógica de negócio:**
+- Valida existência da categoria (`findFirst` por `category_id`)
+- Upload do buffer via `cloudinary.uploader.upload_stream` (pasta `products`)
+- Persiste produto com `banner` = `secure_url` do Cloudinary
+
+**Sucesso — 201:**
+
+```json
+{
+  "id": "uuid",
+  "name": "Pizza Margherita",
+  "price": 4590,
+  "description": "Molho, mussarela e manjericão",
+  "category_id": "uuid",
+  "banner": "https://res.cloudinary.com/.../products/....jpg",
+  "createdAt": "2026-07-04T..."
+}
+```
+
+**Erros:**
+
+| Status | Mensagem | Causa |
+|--------|----------|-------|
+| 401 | `"Token não fornecido!"` / `"Token inválido!"` | Falha de autenticação |
+| 401 | `"Usuário não tem permissão!"` | Role diferente de ADMIN ou usuário inexistente |
+| 400 | `"Erro de validação!"` + `details` | Campos do body inválidos (Zod) |
+| 400 | `"A imagem do produto é obrigatória!"` | Campo `file` ausente |
+| 400 | `"Categoria não encontrada!"` | `category_id` inexistente |
+| 400 | `"Erro ao fazer upload da imagem!"` | Falha no Cloudinary |
+| 400 | Mensagem do Multer | Formato inválido ou arquivo acima de 4 MB |
+
 ### Token JWT — especificação
 
 | Propriedade | Valor |
@@ -663,7 +830,7 @@ Cria uma nova categoria no cardápio.
 ```
 npm run dev
   └── tsx watch --env-file=.env src/server.ts
-        ├── Carrega .env (PORT, DATABASE_URL, JWT_SECRET)
+        ├── Carrega .env (PORT, DATABASE_URL, JWT_SECRET, CLOUDINARY_*)
         ├── Instancia Express
         ├── Registra middlewares globais (json, cors, router)
         ├── Registra error handler
@@ -731,6 +898,26 @@ Cliente → userIsAuthenticated → isAdminRole (consulta role no DB)
 ```
 
 
+### Fluxo: GET `/categoryall` (rota privada)
+
+```
+Cliente → userIsAuthenticated (jwt.verify → req.user_id)
+  → ListAllCategoryController → ListAllCategoryService
+  → category.findMany (orderBy name desc) → 200 [ { id, name, createdAt }, ... ]
+```
+
+
+### Fluxo: POST `/product` (rota privada ADMIN + multipart)
+
+```
+Cliente → userIsAuthenticated → isAdminRole
+  → multer.single('file') (buffer em memória)
+  → validateSchema(createProductSchema)
+  → CreateProductController → CreateProductService
+  → findFirst(category_id) → upload_stream(Cloudinary) → product.create → 201 { ..., banner }
+```
+
+
 ### Tratamento de erros
 
 ```
@@ -754,13 +941,19 @@ Arquivo `.env` na raiz do backend (não versionado):
 DATABASE_URL="postgresql://USUARIO:SENHA@HOST:5432/NOME_DO_BANCO"
 PORT=3333
 JWT_SECRET="sua-chave-secreta-forte-aqui"
+CLOUDINARY_CLOUD_NAME="seu-cloud-name"
+CLOUDINARY_API_KEY="sua-api-key"
+CLOUDINARY_API_SECRET="seu-api-secret"
 ```
 
 | Variável | Onde é usada | Obrigatória para |
 |----------|--------------|------------------|
 | `DATABASE_URL` | `src/prisma/index.ts`, `prisma.config.ts` | Runtime e CLI Prisma |
 | `PORT` | `src/server.ts` (fallback 3333) | Opcional |
-| `JWT_SECRET` | `AuthUserService`, `userIsAuthenticated` | `/session`, `/me`, `/category` |
+| `JWT_SECRET` | `AuthUserService`, `userIsAuthenticated` | Rotas autenticadas (`/me`, `/category`, `/categoryall`, `/product`) |
+| `CLOUDINARY_CLOUD_NAME` | `src/config/cloudinary.ts` | `POST /product` |
+| `CLOUDINARY_API_KEY` | `src/config/cloudinary.ts` | `POST /product` |
+| `CLOUDINARY_API_SECRET` | `src/config/cloudinary.ts` | `POST /product` |
 
 
 ### Dupla carga de variáveis
@@ -819,16 +1012,22 @@ Para setup detalhado, consulte o [README.md](./README.md).
 - Cadastro de usuário com hash bcrypt e unicidade de e-mail
 - Login com JWT (expiração 1h)
 - Perfil do usuário autenticado (`GET /me`)
-- Criação de categoria com JWT + RBAC ADMIN
+- Criação de categoria com JWT + RBAC ADMIN (`POST /category`)
+- Listagem de categorias autenticada (`GET /categoryall`)
+- Criação de produto com JWT + RBAC ADMIN + Multer + Cloudinary (`POST /product`)
+- Schemas Zod: `createUserSchema`, `authUserSchema`, `createCategorySchema`, `createProductSchema`
+- Config `multer` (memória, 4 MB, filtro MIME) e `cloudinary`
 - Middlewares `userIsAuthenticated` e `isAdminRole`
 - Tipagem `Request.user_id`
 
 
 ### Pendente (domínio)
 
-- Endpoints HTTP para **Product**, **Order** e **Item**
-- Schemas Zod para os domínios acima
-- RBAC em rotas futuras de domínio
+- Product: listagem, edição e desativação (`disabled`)
+- Endpoints HTTP para **Order** e **Item**
+- Schemas Zod para Order e Item
+- Coerção tipada de `price` (`z.coerce.number()` em multipart)
+- RBAC em rotas futuras de pedidos/itens
 
 
 ### Débitos técnicos conhecidos
@@ -839,6 +1038,10 @@ Para setup detalhado, consulte o [README.md](./README.md).
 | Status HTTP | `POST /users` retorna 200 (ideal: 201); negação de role usa 401 (ideal: 403) |
 | Mensagem Zod categoria | `.min(2)` vs texto "3 caracteres" |
 | Ordem do pipeline `/category` | Validação Zod roda após auth/RBAC — body inválido ainda consome JWT + lookup no banco |
+| Ordem do pipeline `/product` | Zod roda após multer (correto para multipart); auth/RBAC ainda consome JWT antes da validação |
+| Import path `multer` | `routes.ts` usa `"../src/config/multer"` em vez de `"./config/multer.js"` |
+| Import ESM `productSchema` | Sem sufixo `.js` (inconsistente com outros imports locais) |
+| `price` como string | Multipart + Zod string + `Number()` no service — risco de NaN |
 | Imports ESM | Mistura de imports com e sem sufixo `.js` entre módulos |
 | Semântica booleanos | Comentários de `disabled` e `draft` podem estar invertidos no schema |
 | `dist/` desatualizado | Build legado não reflete `src/` |
@@ -848,4 +1051,4 @@ Para setup detalhado, consulte o [README.md](./README.md).
 
 ---
 
-*Documento gerado com base no estado do repositório em maio/2026.*
+*Documento gerado com base no estado do repositório em julho/2026.*
