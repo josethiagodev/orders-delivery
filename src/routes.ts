@@ -16,6 +16,7 @@ import { ListAllCategoryController } from "./controllers/category/ListAllCategor
 // Controllers Product
 import { CreateProductController } from "./controllers/product/CreateProductController.js";
 import { ListAllProductsController } from "./controllers/product/ListAllProductsController.js";
+import { DeleteProductController } from "./controllers/product/DeleteProductController";
 
 // Validação + Autenticação (Middlewares)
 import { validateSchema } from "./middlewares/validateSchema.js";
@@ -92,4 +93,12 @@ router.get(
     userIsAuthenticated,
     validateSchema(listProductsSchema),
     new ListAllProductsController().handle
+);
+
+// DELETE => Deletar produto específico
+router.delete(
+    "/product", 
+    userIsAuthenticated, 
+    isAdminRole, 
+    new DeleteProductController().handle
 );

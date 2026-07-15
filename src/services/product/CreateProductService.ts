@@ -59,7 +59,6 @@ export class CreateProductService {
 
             bannerURL = result.secure_url;
         } catch (error) {
-            console.error("Erro Cloudinary:", error)
             throw new Error("Erro ao fazer upload da imagem!")
         }
 

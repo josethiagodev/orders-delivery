@@ -15,15 +15,16 @@
 - `GET /categoryall` (JWT — listagem de categorias).
 - `POST /product` (JWT + `ADMIN` + multipart + Zod + upload Cloudinary).
 - `GET /products` (JWT + query `disabled` via Zod — listagem de produtos).
+- `DELETE /product` (JWT + `ADMIN` — soft-delete / arquivamento via `disabled`).
 
 **Domínio cardápio/pedido**
 - Categorias: criação (`POST /category`) e listagem (`GET /categoryall`).
-- Produtos: criação com banner via Cloudinary (`POST /product`) e listagem com filtro `disabled` (`GET /products`). Pendente edição e desativação.
+- Produtos: criação com banner via Cloudinary (`POST /product`), listagem com filtro `disabled` (`GET /products`) e desativação/arquivamento (`DELETE /product`). Pendente edição.
 - Pedidos e itens: modelados no banco; **sem rotas HTTP**.
 
 **Autenticação e autorização**
 - `jsonwebtoken` + `userIsAuthenticated` (Bearer JWT).
-- `isAdminRole` — RBAC parcial: `POST /category` e `POST /product` exigem `User.role === ADMIN`.
+- `isAdminRole` — RBAC parcial: `POST /category`, `POST /product` e `DELETE /product` exigem `User.role === ADMIN`.
 
 ---
 
@@ -181,7 +182,7 @@ Domínio: **cardápio** (categoria → produto) e **pedido** (pedido → itens).
 - Executa após `userIsAuthenticated`; consulta `User` no banco pelo `req.user_id`.
 - Exige `role === ADMIN`; caso contrário ou usuário inexistente: **401** — `{ "error": "Usuário não tem permissão!" }`.
 - Hoje a API usa **401** também para negação de papel (convenção REST costuma usar **403** — backlog de padronização).
-- Rotas que usam `isAdminRole`: `POST /category`, `POST /product`.
+- Rotas que usam `isAdminRole`: `POST /category`, `POST /product`, `DELETE /product`.
 - `GET /me`, `GET /categoryall`, `GET /products`: qualquer role autenticada (`STAFF` ou `ADMIN`).
 
 ---
@@ -290,6 +291,23 @@ Domínio: **cardápio** (categoria → produto) e **pedido** (pedido → itens).
 
 ---
 
+### `DELETE /product`
+
+- **Auth:** Bearer JWT + role **`ADMIN`** (`isAdminRole`).
+- **Pipeline:** `userIsAuthenticated` → `isAdminRole` → `DeleteProductController` → `DeleteProductService`.
+- **Semântica:** soft-delete — marca `disabled: true` (arquiva); **não** remove o registro do banco nem o banner no Cloudinary.
+
+| Param | Origem | Regras |
+|--------|--------|--------|
+| `product_id` | query | string; id do produto a arquivar. Sem schema Zod / `validateSchema` no momento. |
+
+- **Sucesso `200`:** `{ message: "Produto deletado e arquivado com sucesso!" }`.
+- **Sem permissão / usuário inexistente:** `401` — `"Usuário não tem permissão!"`.
+- **Falha (ex.: id inexistente):** `400` — `"Falha ao deletar o produto!"`.
+- **Backlog:** validação Zod de `product_id`; remoção (ou retenção explícita) do arquivo no Cloudinary.
+
+---
+
 
 ## ESTRUTURA DE PASTAS
 
@@ -326,7 +344,8 @@ backend/
 │   │   │   └── ListAllCategoryController.ts
 │   │   └── product/
 │   │       ├── CreateProductController.ts
-│   │       └── ListAllProductsController.ts
+│   │       ├── ListAllProductsController.ts
+│   │       └── DeleteProductController.ts
 │   └── services/
 │       ├── user/
 │       │   ├── CreateUserService.ts
@@ -337,7 +356,8 @@ backend/
 │       │   └── ListAllCategoryService.ts
 │       └── product/
 │           ├── CreateProductService.ts
-│           └── ListAllProductsService.ts
+│           ├── ListAllProductsService.ts
+│           └── DeleteProductService.ts
 ├── package.json
 └── tsconfig.json
 ```
@@ -359,12 +379,14 @@ backend/
 - **`GET /categoryall`** — listagem de categorias (JWT, qualquer role).
 - **`POST /product`** — criação de produto com upload Multer + Cloudinary (JWT + `ADMIN` + `createProductSchema`).
 - **`GET /products`** — listagem de produtos com filtro `disabled` (JWT + `listProductsSchema`).
+- **`DELETE /product`** — soft-delete / arquivamento (`disabled: true`; JWT + `ADMIN`; query `product_id`).
 - Config `multer` (memória, 4 MB, filtro MIME) e `cloudinary`.
 - Middleware `userIsAuthenticated`, `isAdminRole` e tipagem `Request.user_id`.
 
 **Em progresso**
 - RBAC em demais rotas de domínio (pedidos, itens) quando existirem endpoints.
-- Edição e desativação de produtos.
+- Edição de produtos.
+- Validação Zod de `product_id` em `DELETE /product`; remoção (ou política explícita) do banner no Cloudinary ao arquivar.
 - Coerção tipada de `price` (`z.coerce.number()` em multipart).
 - `validateSchema` não repassa dados parseados/transformados para `req`.
 - Naming REST: `GET /categoryall` vs `GET /products`.
@@ -385,8 +407,9 @@ backend/
 - **Prisma 7:** URL do datasource em **`prisma.config.ts`**, não no bloco `datasource` do `schema.prisma` além do `provider`.
 - **Adapter `pg`:** client desacoplado do driver; pool e políticas por ambiente.
 - **JWT:** `sub` = id do usuário; payload inclui `name` e `email`; expiração fixa **1h**; sem refresh/blacklist no momento; `role` não está no token — autorização admin consulta o banco por request.
-- **Rotas protegidas:** identidade via `req.user_id` após `verify`; autorização por papel onde `isAdminRole` está encadeado (`POST /category`, `POST /product`).
-- **Validação:** schemas Zod por rota (`userSchema`, `categorySchema`, `productSchema`); em `/category` o Zod roda após auth/RBAC (trade-off: corpo inválido ainda consome JWT + lookup no banco). `POST /product` valida body após multer; `GET /products` valida query após auth (mesmo trade-off com JWT).
+- **Rotas protegidas:** identidade via `req.user_id` após `verify`; autorização por papel onde `isAdminRole` está encadeado (`POST /category`, `POST /product`, `DELETE /product`).
+- **Validação:** schemas Zod por rota (`userSchema`, `categorySchema`, `productSchema`); em `/category` o Zod roda após auth/RBAC (trade-off: corpo inválido ainda consome JWT + lookup no banco). `POST /product` valida body após multer; `GET /products` valida query após auth (mesmo trade-off com JWT). `DELETE /product` ainda sem `validateSchema` na query.
 - **Upload de produto:** arquivo não persiste em disco — Multer `memoryStorage` envia buffer direto ao Cloudinary via `upload_stream`; URL pública gravada em `Product.banner`.
+- **Delete de produto:** soft-delete — `disabled: true` arquiva o produto; não há hard delete no banco nem exclusão do arquivo no Cloudinary.
 - **Cloudinary:** credenciais exclusivamente via env; pasta `products`; `public_id` com timestamp + nome do arquivo.
 - **Imports ESM:** mistura de imports com e sem sufixo `.js` entre módulos locais — alinhar em refatoração futura.

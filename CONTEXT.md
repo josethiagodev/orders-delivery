@@ -15,11 +15,11 @@ API REST construída em Node.js e TypeScript para gestão de comércios e delive
 | Área | Estado |
 |------|--------|
 | Modelagem de dados (Prisma + PostgreSQL) | Completa — User, Category, Product, Order, Item |
-| Endpoints HTTP | Parcial — **7 rotas** ativas |
+| Endpoints HTTP | Parcial — **8 rotas** ativas |
 | Autenticação JWT | Implementada (`/session`, `/me`) |
-| RBAC (role `ADMIN`) | Implementado em `POST /category` e `POST /product` |
+| RBAC (role `ADMIN`) | Implementado em `POST /category`, `POST /product` e `DELETE /product` |
 | Categorias | Criação (ADMIN) + listagem (`GET /categoryall`, qualquer role autenticada) |
-| Produtos | Parcial — `POST /product` (ADMIN + Cloudinary) + listagem (`GET /products`, qualquer role autenticada); pendente edição e desativação |
+| Produtos | `POST /product` (ADMIN + Cloudinary) + listagem (`GET /products`) + soft-delete (`DELETE /product`); pendente edição |
 | Pedidos e itens | Modelados no banco; **sem rotas HTTP** |
 
 
@@ -84,6 +84,11 @@ Rota → userIsAuthenticated → validateSchema → Controller → Service → P
 Rota → userIsAuthenticated → isAdminRole → validateSchema → Controller → Service → Prisma
 ```
 
+**Rotas privadas (role ADMIN, sem Zod):**
+```
+Rota → userIsAuthenticated → isAdminRole → Controller → Service → Prisma
+```
+
 **Rotas privadas (role ADMIN + multipart):**
 ```
 Rota → userIsAuthenticated → isAdminRole → multer.single('file') → validateSchema → Controller → Service → Cloudinary → Prisma
@@ -106,7 +111,7 @@ Rota → userIsAuthenticated → isAdminRole → multer.single('file') → valid
 |---------|------|-------|
 | `user` | Sim — cadastro, login, perfil | Sim |
 | `category` | Sim — criação (ADMIN) + listagem | Sim |
-| `product` | Parcial — `POST /product` (ADMIN + Cloudinary) + `GET /products` | Sim |
+| `product` | Parcial — `POST /product` + `GET /products` + `DELETE /product` (soft-delete); pendente edição | Sim |
 | `order` | Não | Sim |
 | `item` | Não | Sim |
 
@@ -223,7 +228,8 @@ backend/
 │   │   │   └── ListAllCategoryController.ts
 │   │   └── product/
 │   │       ├── CreateProductController.ts
-│   │       └── ListAllProductsController.ts
+│   │       ├── ListAllProductsController.ts
+│   │       └── DeleteProductController.ts
 │   └── services/
 │       ├── user/
 │       │   ├── CreateUserService.ts
@@ -234,7 +240,8 @@ backend/
 │       │   └── ListAllCategoryService.ts
 │       └── product/
 │           ├── CreateProductService.ts
-│           └── ListAllProductsService.ts
+│           ├── ListAllProductsService.ts
+│           └── DeleteProductService.ts
 └── dist/                       # Build legado/desatualizado — não usar como referência
 ```
 
@@ -416,7 +423,7 @@ Executa após `userIsAuthenticated`. Consulta o usuário no banco e exige `role 
 
 > A API usa **401** também para negação de papel. A convenção REST costuma reservar **403 Forbidden** para esse caso — backlog de padronização.
 
-Rotas protegidas por `isAdminRole`: `POST /category`, `POST /product`.
+Rotas protegidas por `isAdminRole`: `POST /category`, `POST /product`, `DELETE /product`.
 
 
 ### Tipagem Express
@@ -553,7 +560,8 @@ Rota: `GET /products`
 
 ### Schemas pendentes
 
-Não existem schemas Zod para **Order** ou **Item** — domínios ainda sem endpoints HTTP.
+Não existem schemas Zod para **Order** ou **Item** — domínios ainda sem endpoints HTTP.  
+`DELETE /product` também ainda **não** possui schema Zod para a query `product_id`.
 
 ---
 
@@ -573,6 +581,7 @@ Não existem schemas Zod para **Order** ou **Item** — domínios ainda sem endp
 | GET | `/categoryall` | JWT | auth → ListAllCategory | 200 |
 | POST | `/product` | JWT + ADMIN | auth → admin → multer → validate → CreateProduct → Cloudinary | 201 |
 | GET | `/products` | JWT | auth → validate → ListAllProducts | 200 |
+| DELETE | `/product` | JWT + ADMIN | auth → isAdmin → DeleteProduct | 200 |
 
 ---
 
@@ -883,6 +892,47 @@ Lista produtos do cardápio com filtro opcional por status `disabled`.
 ---
 
 
+### DELETE `/product`
+
+Arquiva (soft-delete) um produto específico, marcando `disabled: true`.
+
+**Auth:** Bearer JWT + role **ADMIN**.
+
+**Header:** `Authorization: Bearer <token>`
+
+**Query params:**
+
+| Param | Tipo | Obrigatório | Detalhes |
+|-------|------|-------------|----------|
+| `product_id` | string (UUID) | Sim | ID do produto a arquivar — **sem** `validateSchema` (débito) |
+
+**Pipeline:** `userIsAuthenticated` → `isAdminRole` → `DeleteProductController` → `DeleteProductService`
+
+**Lógica de negócio:**
+- `product.update` com `data: { disabled: true }`
+- **Não** remove o registro do banco
+- **Não** remove o banner no Cloudinary
+- Qualquer falha do Prisma (ex.: id inexistente) cai no `catch` genérico do service
+
+**Sucesso — 200:**
+
+```json
+{
+  "message": "Produto deletado e arquivado com sucesso!"
+}
+```
+
+**Erros:**
+
+| Status | Mensagem | Causa |
+|--------|----------|-------|
+| 401 | `"Token não fornecido!"` / `"Token inválido!"` | Falha de autenticação |
+| 401 | `"Usuário não tem permissão!"` | Role diferente de ADMIN ou usuário inexistente |
+| 400 | `"Falha ao deletar o produto!"` | Id inexistente ou falha no update Prisma |
+
+---
+
+
 ### Token JWT — especificação
 
 | Propriedade | Valor |
@@ -1003,6 +1053,16 @@ Cliente → userIsAuthenticated (jwt.verify → req.user_id)
 ```
 
 
+### Fluxo: DELETE `/product` (rota privada ADMIN, soft-delete)
+
+```
+Cliente → userIsAuthenticated → isAdminRole
+  → DeleteProductController (query.product_id)
+  → DeleteProductService → product.update({ disabled: true })
+  → 200 { message: "Produto deletado e arquivado com sucesso!" }
+```
+
+
 ### Tratamento de erros
 
 ```
@@ -1035,7 +1095,7 @@ CLOUDINARY_API_SECRET="seu-api-secret"
 |----------|--------------|------------------|
 | `DATABASE_URL` | `src/prisma/index.ts`, `prisma.config.ts` | Runtime e CLI Prisma |
 | `PORT` | `src/server.ts` (fallback 3333) | Opcional |
-| `JWT_SECRET` | `AuthUserService`, `userIsAuthenticated` | Rotas autenticadas (`/me`, `/category`, `/categoryall`, `/product`, `/products`) |
+| `JWT_SECRET` | `AuthUserService`, `userIsAuthenticated` | Rotas autenticadas (`/me`, `/category`, `/categoryall`, `/product`, `/products`, `DELETE /product`) |
 | `CLOUDINARY_CLOUD_NAME` | `src/config/cloudinary.ts` | `POST /product` |
 | `CLOUDINARY_API_KEY` | `src/config/cloudinary.ts` | `POST /product` |
 | `CLOUDINARY_API_SECRET` | `src/config/cloudinary.ts` | `POST /product` |
@@ -1101,6 +1161,7 @@ Para setup detalhado, consulte o [README.md](./README.md).
 - Listagem de categorias autenticada (`GET /categoryall`)
 - Criação de produto com JWT + RBAC ADMIN + Multer + Cloudinary (`POST /product`)
 - Listagem de produtos autenticada (`GET /products`) com filtro `disabled`
+- Soft-delete / arquivamento de produto com JWT + RBAC ADMIN (`DELETE /product` → `disabled: true`)
 - Schemas Zod: `createUserSchema`, `authUserSchema`, `createCategorySchema`, `createProductSchema`, `listProductsSchema`
 - Config `multer` (memória, 4 MB, filtro MIME) e `cloudinary`
 - Middlewares `userIsAuthenticated` e `isAdminRole`
@@ -1109,7 +1170,7 @@ Para setup detalhado, consulte o [README.md](./README.md).
 
 ### Pendente (domínio)
 
-- Product: edição e desativação (`disabled` via endpoint dedicado ou PATCH)
+- Product: edição (`PATCH` / `PUT`)
 - Endpoints HTTP para **Order** e **Item**
 - Schemas Zod para Order e Item
 - Coerção tipada de `price` (`z.coerce.number()` em multipart)
@@ -1128,9 +1189,11 @@ Para setup detalhado, consulte o [README.md](./README.md).
 | Ordem do pipeline `/category` | Validação Zod roda após auth/RBAC — body inválido ainda consome JWT + lookup no banco |
 | Ordem do pipeline `/product` | Zod roda após multer (correto para multipart); auth/RBAC ainda consome JWT antes da validação |
 | Ordem do pipeline `/products` | Auth roda antes da validação de query — param inválido ainda consome JWT |
+| `DELETE /product` sem Zod | Query `product_id` sem `validateSchema` — id ausente/inválido só falha no Prisma |
+| Soft-delete Cloudinary | Arquivamento não remove (nem define política explícita para) o banner no Cloudinary |
 | Import path `multer` | `routes.ts` usa `"../src/config/multer"` em vez de `"./config/multer.js"` |
 | Import ESM `productSchema` | Sem sufixo `.js` (inconsistente com outros imports locais) |
-| Imports ESM (ListAllProducts*) | `ListAllProductsController` e `ListAllProductsService` sem sufixo `.js` |
+| Imports ESM (ListAllProducts* / DeleteProduct*) | Controllers e services de listagem/delete de produto sem sufixo `.js` |
 | `price` como string | Multipart + Zod string + `Number()` no service — risco de NaN |
 | Imports ESM | Mistura de imports com e sem sufixo `.js` entre módulos |
 | Semântica booleanos | Comentários de `disabled` e `draft` podem estar invertidos no schema |
