@@ -15,11 +15,11 @@ API REST construída em Node.js e TypeScript para gestão de comércios e delive
 | Área | Estado |
 |------|--------|
 | Modelagem de dados (Prisma + PostgreSQL) | Completa — User, Category, Product, Order, Item |
-| Endpoints HTTP | Parcial — **8 rotas** ativas |
+| Endpoints HTTP | Parcial — **9 rotas** ativas |
 | Autenticação JWT | Implementada (`/session`, `/me`) |
 | RBAC (role `ADMIN`) | Implementado em `POST /category`, `POST /product` e `DELETE /product` |
-| Categorias | Criação (ADMIN) + listagem (`GET /categoryall`, qualquer role autenticada) |
-| Produtos | `POST /product` (ADMIN + Cloudinary) + listagem (`GET /products`) + soft-delete (`DELETE /product`); pendente edição |
+| Categorias | Criação (ADMIN) + listagem (`GET /categoryall`, qualquer role autenticada) + produtos por categoria (`GET /category/product`) |
+| Produtos | `POST /product` (ADMIN + Cloudinary) + listagem (`GET /products`) + por categoria (`GET /category/product`) + soft-delete (`DELETE /product`); pendente edição |
 | Pedidos e itens | Modelados no banco; **sem rotas HTTP** |
 
 
@@ -111,7 +111,7 @@ Rota → userIsAuthenticated → isAdminRole → multer.single('file') → valid
 |---------|------|-------|
 | `user` | Sim — cadastro, login, perfil | Sim |
 | `category` | Sim — criação (ADMIN) + listagem | Sim |
-| `product` | Parcial — `POST /product` + `GET /products` + `DELETE /product` (soft-delete); pendente edição | Sim |
+| `product` | Parcial — `POST /product` + `GET /products` + `GET /category/product` + `DELETE /product` (soft-delete); pendente edição | Sim |
 | `order` | Não | Sim |
 | `item` | Não | Sim |
 
@@ -217,7 +217,7 @@ backend/
 │   ├── schemas/
 │   │   ├── userSchema.ts       # createUserSchema, authUserSchema
 │   │   ├── categorySchema.ts   # createCategorySchema
-│   │   └── productSchema.ts    # createProductSchema, listProductsSchema
+│   │   └── productSchema.ts    # createProductSchema, listProductsSchema, listProductsByCategorySchema
 │   ├── controllers/
 │   │   ├── user/
 │   │   │   ├── CreateUserController.ts
@@ -229,6 +229,7 @@ backend/
 │   │   └── product/
 │   │       ├── CreateProductController.ts
 │   │       ├── ListAllProductsController.ts
+│   │       ├── ListProductsByCategoryController.ts
 │   │       └── DeleteProductController.ts
 │   └── services/
 │       ├── user/
@@ -241,6 +242,7 @@ backend/
 │       └── product/
 │           ├── CreateProductService.ts
 │           ├── ListAllProductsService.ts
+│           ├── ListProductsByCategoryService.ts
 │           └── DeleteProductService.ts
 └── dist/                       # Build legado/desatualizado — não usar como referência
 ```
@@ -336,8 +338,8 @@ erDiagram
 ### Enum Role
 
 ```
-STAFF  — operador padrão (default no cadastro)
-ADMIN  — administrador (acesso a rotas protegidas por isAdminRole)
+**STAFF**: usuário padrão (default no cadastro)
+**ADMIN**: usuário administrador (acessa somente rotas protegidas por 'isAdminRole')
 ```
 
 
@@ -408,7 +410,7 @@ Extrai token Bearer do header `Authorization`, verifica com `JWT_SECRET` e defin
 | Token inválido/expirado | 401 | `{ error: "Token inválido!" }` |
 | Token válido | — | `req.user_id = sub` → `next()` |
 
-**Débito técnico:** quando o token está ausente, o middleware responde 401 mas **não faz `return`**, o que pode causar erro ao chamar `authToken.split(" ")` na linha seguinte.
+**Débito técnico:** quando o token está ausente, o middleware responde 401 mas **não faz `return`**. O fluxo segue para `authToken.split(" ")` e pode lançar `TypeError` (`Cannot read properties of undefined`).
 
 #### `isAdminRole` — [`src/middlewares/isAdminRole.ts`](./src/middlewares/isAdminRole.ts)
 
@@ -503,6 +505,8 @@ Rota: `POST /users`
 | `email` | `z.email()`, regex (minúsculas no local-part), `trim`, `toLowerCase()` |
 | `password` | String, mínimo **6** caracteres, `trim` |
 
+> `.toLowerCase()` no e-mail ocorre só no parse Zod — `validateSchema` não reinjeta o valor em `req.body`; o service persiste/consulta o e-mail bruto do body.
+
 #### `authUserSchema` — [`src/schemas/userSchema.ts`](./src/schemas/userSchema.ts)
 
 Rota: `POST /session`
@@ -512,15 +516,19 @@ Rota: `POST /session`
 | `email` | Mesmas regras de `createUserSchema.email` |
 | `password` | Mesmas regras de `createUserSchema.password` |
 
+> Mesmo limite de `validateSchema`: normalização de e-mail no parse não altera `req.body` consumido pelo service.
+
 #### `createCategorySchema` — [`src/schemas/categorySchema.ts`](./src/schemas/categorySchema.ts)
 
 Rota: `POST /category`
 
 | Campo | Regras |
 |-------|--------|
-| `name` | String, mínimo **2** caracteres após `trim`; `toLowerCase()`; regex `^[a-z]+$` (somente letras minúsculas) |
+| `name` | String, mínimo **2** caracteres após `trim`; `toLowerCase()`; regex `^[a-z]+$` (somente letras minúsculas) — transforms usados **só na validação** |
 
 **Inconsistência documentada:** a regra usa `.min(2)`, mas a mensagem de erro menciona "Mínimo de **3** caracteres". Alinhar regra e mensagem em refatoração futura.
+
+> `.trim()` / `.toLowerCase()` não são aplicados na persistência — o controller passa `req.body.name` bruto ao service. Ver débito `validateSchema`.
 
 #### `createProductSchema` — [`src/schemas/productSchema.ts`](./src/schemas/productSchema.ts)
 
@@ -544,6 +552,17 @@ Rota: `GET /products`
 | `query.disabled` | Enum `"true"` \| `"false"`; opcional; default `"false"`; `.strict()` rejeita query params desconhecidos |
 
 > O schema inclui `.transform((val) => val === "true")`, mas `validateSchema` não repassa o resultado parseado para `req` — o controller lê `req.query.disabled` como string bruta. Ver débito técnico em `validateSchema`.
+
+
+#### `listProductsByCategorySchema` — [`src/schemas/productSchema.ts`](./src/schemas/productSchema.ts)
+
+Rota: `GET /category/product`
+
+| Campo | Regras |
+|-------|--------|
+| `query.category_id` | String obrigatória (`z.string`); **sem** `.trim()`, **sem** `.min(1)`, **sem** `.strict()` |
+
+> Assimetria com `listProductsSchema`: aquele rejeita query params desconhecidos via `.strict()` e aplica default/`transform` em `disabled`. Este schema só exige a presença tipada de `category_id` — params extras na query passam.
 
 
 ### Resposta de erro de validação
@@ -579,6 +598,7 @@ Não existem schemas Zod para **Order** ou **Item** — domínios ainda sem endp
 | GET | `/me` | JWT | userIsAuthenticated → DetailUser | 200 |
 | POST | `/category` | JWT + ADMIN | auth → isAdmin → validate → CreateCategory | 201 |
 | GET | `/categoryall` | JWT | auth → ListAllCategory | 200 |
+| GET | `/category/product` | JWT | auth → validate → ListProductsByCategory | 200 |
 | POST | `/product` | JWT + ADMIN | auth → admin → multer → validate → CreateProduct → Cloudinary | 201 |
 | GET | `/products` | JWT | auth → validate → ListAllProducts | 200 |
 | DELETE | `/product` | JWT + ADMIN | auth → isAdmin → DeleteProduct | 200 |
@@ -722,18 +742,22 @@ Cria uma nova categoria no cardápio.
 
 ```json
 {
-  "name": "Pizzas"
+  "name": "pizzas"
 }
 ```
 
 **Pipeline:** `userIsAuthenticated` → `isAdminRole` → `validateSchema(createCategorySchema)` → `CreateCategoryController` → `CreateCategoryService`
+
+**Lógica de negócio:**
+- O schema Zod aplica `.trim()` / `.toLowerCase()` / regex **apenas durante a validação** — `validateSchema` não reinjeta o valor parseado em `req.body`
+- O service persiste `req.body.name` **bruto** (o que o cliente enviou). Preferir enviar já em minúsculas (`"pizzas"`)
 
 **Sucesso — 201:**
 
 ```json
 {
   "id": "uuid",
-  "name": "Pizzas",
+  "name": "pizzas",
   "createdAt": "2026-05-23T..."
 }
 ```
@@ -779,6 +803,63 @@ Lista todas as categorias do cardápio.
 |--------|----------|-------|
 | 401 | `"Token não fornecido!"` / `"Token inválido!"` | Falha de autenticação |
 | 400 | `"Erro ao buscar as categorias!"` | Falha na consulta |
+
+---
+
+
+### GET `/category/product`
+
+Lista os produtos ativos (`disabled: false`) de uma categoria específica.
+
+**Auth:** Bearer JWT (qualquer role: `STAFF` ou `ADMIN`).
+
+**Header:** `Authorization: Bearer <token>`
+
+**Query params:**
+
+| Param | Tipo | Obrigatório | Detalhes |
+|-------|------|-------------|----------|
+| `category_id` | string | Sim | ID da categoria cujos produtos serão listados |
+
+> **Contraste com `GET /products`:** esta rota **sempre** filtra `disabled: false` e **não** aceita query de status. Em `GET /products`, o filtro `disabled` é opcional (`"true"` \| `"false"`, default implícito ativos).
+
+**Pipeline:** `userIsAuthenticated` → `validateSchema(listProductsByCategorySchema)` → `ListProductsByCategoryController` → `ListProductsByCategoryService`
+
+**Lógica de negócio:**
+- Valida existência da categoria (`findUnique` por `id`)
+- `findMany` com filtro `where: { category_id, disabled: false }`
+- `select`: `id`, `name`, `price`, `description`, `banner`, `disabled`, `category_id`, `createdAt` + relação `category { id, name }`
+- Ordenação por `name` desc
+
+**Sucesso — 200:**
+
+```json
+[
+  {
+    "id": "uuid",
+    "name": "Pizza Margherita",
+    "price": 4590,
+    "description": "Molho, mussarela e manjericão",
+    "banner": "https://res.cloudinary.com/.../products/....jpg",
+    "disabled": false,
+    "category_id": "uuid",
+    "createdAt": "2026-07-04T...",
+    "category": {
+      "id": "uuid",
+      "name": "pizzas"
+    }
+  }
+]
+```
+
+**Erros:**
+
+| Status | Mensagem | Causa |
+|--------|----------|-------|
+| 401 | `"Token não fornecido!"` / `"Token inválido!"` | Falha de autenticação |
+| 400 | `"Erro de validação!"` + `details` | Query `category_id` ausente ou não-string |
+| 400 | `"Categoria não encontrada!"` | `category_id` inexistente |
+| 400 | `"Falha ao buscar produto da categoria!"` | Falha na consulta Prisma |
 
 ---
 
@@ -1031,6 +1112,17 @@ Cliente → userIsAuthenticated (jwt.verify → req.user_id)
 ```
 
 
+### Fluxo: GET `/category/product` (rota privada com validação de query)
+
+```
+Cliente → userIsAuthenticated (jwt.verify → req.user_id)
+  → validateSchema(listProductsByCategorySchema)
+  → ListProductsByCategoryController → ListProductsByCategoryService
+  → findUnique(id) → product.findMany (where category_id + disabled: false)
+  → 200 [ { id, name, price, ..., category: { id, name } }, ... ]
+```
+
+
 ### Fluxo: POST `/product` (rota privada ADMIN + multipart)
 
 ```
@@ -1095,7 +1187,7 @@ CLOUDINARY_API_SECRET="seu-api-secret"
 |----------|--------------|------------------|
 | `DATABASE_URL` | `src/prisma/index.ts`, `prisma.config.ts` | Runtime e CLI Prisma |
 | `PORT` | `src/server.ts` (fallback 3333) | Opcional |
-| `JWT_SECRET` | `AuthUserService`, `userIsAuthenticated` | Rotas autenticadas (`/me`, `/category`, `/categoryall`, `/product`, `/products`, `DELETE /product`) |
+| `JWT_SECRET` | `AuthUserService`, `userIsAuthenticated` | Rotas autenticadas (`/me`, `/category`, `/categoryall`, `/category/product`, `/product`, `/products`, `DELETE /product`) |
 | `CLOUDINARY_CLOUD_NAME` | `src/config/cloudinary.ts` | `POST /product` |
 | `CLOUDINARY_API_KEY` | `src/config/cloudinary.ts` | `POST /product` |
 | `CLOUDINARY_API_SECRET` | `src/config/cloudinary.ts` | `POST /product` |
@@ -1159,10 +1251,11 @@ Para setup detalhado, consulte o [README.md](./README.md).
 - Perfil do usuário autenticado (`GET /me`)
 - Criação de categoria com JWT + RBAC ADMIN (`POST /category`)
 - Listagem de categorias autenticada (`GET /categoryall`)
+- Listagem de produtos por categoria autenticada (`GET /category/product`) com validação de `category_id`
 - Criação de produto com JWT + RBAC ADMIN + Multer + Cloudinary (`POST /product`)
 - Listagem de produtos autenticada (`GET /products`) com filtro `disabled`
 - Soft-delete / arquivamento de produto com JWT + RBAC ADMIN (`DELETE /product` → `disabled: true`)
-- Schemas Zod: `createUserSchema`, `authUserSchema`, `createCategorySchema`, `createProductSchema`, `listProductsSchema`
+- Schemas Zod: `createUserSchema`, `authUserSchema`, `createCategorySchema`, `createProductSchema`, `listProductsSchema`, `listProductsByCategorySchema`
 - Config `multer` (memória, 4 MB, filtro MIME) e `cloudinary`
 - Middlewares `userIsAuthenticated` e `isAdminRole`
 - Tipagem `Request.user_id`
@@ -1181,19 +1274,21 @@ Para setup detalhado, consulte o [README.md](./README.md).
 
 | Item | Descrição |
 |------|-----------|
-| `validateSchema` | Valida mas não injeta dados parseados/transformados em `req` — `.transform()` de `listProductsSchema` nunca é consumido pelo controller |
+| `validateSchema` | Valida mas não injeta dados parseados/transformados em `req`. Impacta: `.transform()` de `listProductsSchema` (`disabled` boolean); `.toLowerCase()`/`.trim()` de `createCategorySchema` (nome persistido bruto); `.toLowerCase()` de e-mail em `createUserSchema`/`authUserSchema` |
 | Naming de rotas | Inconsistência: `GET /categoryall` vs `GET /products` — backlog de padronização REST |
-| `userIsAuthenticated` | Falta `return` após responder 401 quando token ausente |
+| `userIsAuthenticated` | Falta `return` após responder 401 quando token ausente — o fluxo segue para `authToken.split` e pode lançar `TypeError` |
+| Assimetria Zod listagens | `listProductsSchema` usa `.strict()`; `listProductsByCategorySchema` não — params extras na query de `/category/product` passam |
 | Status HTTP | `POST /users` retorna 200 (ideal: 201); negação de role usa 401 (ideal: 403) |
 | Mensagem Zod categoria | `.min(2)` vs texto "3 caracteres" |
 | Ordem do pipeline `/category` | Validação Zod roda após auth/RBAC — body inválido ainda consome JWT + lookup no banco |
 | Ordem do pipeline `/product` | Zod roda após multer (correto para multipart); auth/RBAC ainda consome JWT antes da validação |
 | Ordem do pipeline `/products` | Auth roda antes da validação de query — param inválido ainda consome JWT |
+| Ordem do pipeline `/category/product` | Auth roda antes da validação de query — param inválido ainda consome JWT |
 | `DELETE /product` sem Zod | Query `product_id` sem `validateSchema` — id ausente/inválido só falha no Prisma |
 | Soft-delete Cloudinary | Arquivamento não remove (nem define política explícita para) o banner no Cloudinary |
 | Import path `multer` | `routes.ts` usa `"../src/config/multer"` em vez de `"./config/multer.js"` |
 | Import ESM `productSchema` | Sem sufixo `.js` (inconsistente com outros imports locais) |
-| Imports ESM (ListAllProducts* / DeleteProduct*) | Controllers e services de listagem/delete de produto sem sufixo `.js` |
+| Imports ESM (ListAllProducts* / ListProductsByCategory* / DeleteProduct*) | Controllers e services de listagem/delete de produto sem sufixo `.js` |
 | `price` como string | Multipart + Zod string + `Number()` no service — risco de NaN |
 | Imports ESM | Mistura de imports com e sem sufixo `.js` entre módulos |
 | Semântica booleanos | Comentários de `disabled` e `draft` podem estar invertidos no schema |
@@ -1204,4 +1299,4 @@ Para setup detalhado, consulte o [README.md](./README.md).
 
 ---
 
-*Documento gerado com base no estado do repositório em julho/2026.*
+*Documento alinhado ao estado do repositório em julho/2026 (pós-rota `GET /category/product`).*

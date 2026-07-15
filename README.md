@@ -13,14 +13,16 @@
 **HTTP implementado**
 - `POST /users`, `POST /session` (JWT), `GET /me`, `POST /category` (JWT + role `ADMIN` + Zod).
 - `GET /categoryall` (JWT — listagem de categorias).
+- `GET /category/product` (JWT + query `category_id` via Zod — produtos de uma categoria).
 - `POST /product` (JWT + `ADMIN` + multipart + Zod + upload Cloudinary).
 - `GET /products` (JWT + query `disabled` via Zod — listagem de produtos).
 - `DELETE /product` (JWT + `ADMIN` — soft-delete / arquivamento via `disabled`).
 
 **Domínio cardápio/pedido**
-- Categorias: criação (`POST /category`) e listagem (`GET /categoryall`).
-- Produtos: criação com banner via Cloudinary (`POST /product`), listagem com filtro `disabled` (`GET /products`) e desativação/arquivamento (`DELETE /product`). Pendente edição.
-- Pedidos e itens: modelados no banco; **sem rotas HTTP**.
+- Usuários: cadastro (`POST /users`), login (`POST /session`) e perfil (`GET /me`). Sem listagem, edição, delete ou gestão de `role`.
+- Categorias: criação (`POST /category`), listagem (`GET /categoryall`) e produtos por categoria (`GET /category/product`). Sem get-by-id, update ou delete.
+- Produtos: criação com banner via Cloudinary (`POST /product`), listagem com filtro `disabled` (`GET /products`), por categoria (`GET /category/product`) e desativação/arquivamento (`DELETE /product`). Pendente edição (`PATCH`/`PUT`) e get-by-id.
+- Pedidos e itens (`Order` / `Item`): modelados no schema Prisma; **sem rotas HTTP**, controllers, services ou schemas Zod.
 
 **Autenticação e autorização**
 - `jsonwebtoken` + `userIsAuthenticated` (Bearer JWT).
@@ -183,7 +185,7 @@ Domínio: **cardápio** (categoria → produto) e **pedido** (pedido → itens).
 - Exige `role === ADMIN`; caso contrário ou usuário inexistente: **401** — `{ "error": "Usuário não tem permissão!" }`.
 - Hoje a API usa **401** também para negação de papel (convenção REST costuma usar **403** — backlog de padronização).
 - Rotas que usam `isAdminRole`: `POST /category`, `POST /product`, `DELETE /product`.
-- `GET /me`, `GET /categoryall`, `GET /products`: qualquer role autenticada (`STAFF` ou `ADMIN`).
+- `GET /me`, `GET /categoryall`, `GET /category/product`, `GET /products`: qualquer role autenticada (`STAFF` ou `ADMIN`).
 
 ---
 
@@ -247,6 +249,23 @@ Domínio: **cardápio** (categoria → produto) e **pedido** (pedido → itens).
 - **Pipeline:** `userIsAuthenticated` → `ListAllCategoryController` → `ListAllCategoryService`.
 - **Sucesso `200`:** `[ { id, name, createdAt }, ... ]` — ordenado por `name` desc.
 - **Falha:** `400` — `"Erro ao buscar as categorias!"`.
+
+---
+
+### `GET /category/product`
+
+- **Auth:** Bearer JWT (qualquer role).
+- **Pipeline:** `userIsAuthenticated` → `validateSchema(listProductsByCategorySchema)` → `ListProductsByCategoryController` → `ListProductsByCategoryService`.
+
+| Param | Regras (`productSchema.ts`) |
+|--------|----------------------------|
+| `category_id` | string obrigatória, mínimo **1** após `trim`; `.strict()` rejeita query params desconhecidos |
+
+- **Lógica:** valida existência da categoria; lista apenas produtos ativos (`disabled: false`) da categoria.
+- **Sucesso `200`:** `[ { id, name, price, description, banner, disabled, category_id, createdAt, category: { id, name } }, ... ]` — ordenado por `name` desc.
+- **Validação:** `400` — `{ "error": "Erro de validação!", "details": [ { "message": "..." } ] }`.
+- **Categoria inexistente:** `400` — `"Categoria não encontrada!"`.
+- **Falha:** `400` — `"Falha ao buscar os produtos!"`.
 
 ---
 
@@ -333,7 +352,7 @@ backend/
 │   ├── schemas/
 │   │   ├── userSchema.ts
 │   │   ├── categorySchema.ts      # createCategorySchema
-│   │   └── productSchema.ts       # createProductSchema, listProductsSchema
+│   │   └── productSchema.ts       # createProductSchema, listProductsSchema, listProductsByCategorySchema
 │   ├── controllers/
 │   │   ├── user/
 │   │   │   ├── CreateUserController.ts
@@ -345,6 +364,7 @@ backend/
 │   │   └── product/
 │   │       ├── CreateProductController.ts
 │   │       ├── ListAllProductsController.ts
+│   │       ├── ListProductsByCategoryController.ts
 │   │       └── DeleteProductController.ts
 │   └── services/
 │       ├── user/
@@ -357,6 +377,7 @@ backend/
 │       └── product/
 │           ├── CreateProductService.ts
 │           ├── ListAllProductsService.ts
+│           ├── ListProductsByCategoryService.ts
 │           └── DeleteProductService.ts
 ├── package.json
 └── tsconfig.json
@@ -370,33 +391,39 @@ backend/
 **Feito**
 - Modelagem relacional + migração inicial.
 - Express 5, TypeScript estrito, CORS, JSON parser.
-- Validação Zod (`createUserSchema`, `authUserSchema`, `createCategorySchema`, `createProductSchema`, `listProductsSchema`) e middleware reutilizável.
+- Validação Zod (`createUserSchema`, `authUserSchema`, `createCategorySchema`, `createProductSchema`, `listProductsSchema`, `listProductsByCategorySchema`) e middleware reutilizável.
 - Prisma 7, client em `src/generated/prisma`, adapter **`pg`**.
 - **`POST /users`** — persistência, unicidade de e-mail, hash bcrypt.
 - **`POST /session`** — login com `bcrypt.compare` + JWT (1h).
 - **`GET /me`** — perfil do usuário autenticado (qualquer role).
 - **`POST /category`** — criação de categoria (JWT + `ADMIN` + `createCategorySchema`).
 - **`GET /categoryall`** — listagem de categorias (JWT, qualquer role).
+- **`GET /category/product`** — produtos ativos de uma categoria (JWT + `listProductsByCategorySchema`).
 - **`POST /product`** — criação de produto com upload Multer + Cloudinary (JWT + `ADMIN` + `createProductSchema`).
 - **`GET /products`** — listagem de produtos com filtro `disabled` (JWT + `listProductsSchema`).
 - **`DELETE /product`** — soft-delete / arquivamento (`disabled: true`; JWT + `ADMIN`; query `product_id`).
 - Config `multer` (memória, 4 MB, filtro MIME) e `cloudinary`.
 - Middleware `userIsAuthenticated`, `isAdminRole` e tipagem `Request.user_id`.
 
-**Em progresso**
-- RBAC em demais rotas de domínio (pedidos, itens) quando existirem endpoints.
-- Edição de produtos.
+**Não adicionado (domínio)**
+- Produto: edição (`PATCH`/`PUT`); get-by-id.
+- Categoria: get-by-id, update e delete.
+- Usuário: listagem, alteração de `role`, update e delete.
+- Pedidos e itens: endpoints HTTP + schemas Zod (`Order` / `Item`) — hoje só no banco.
+- RBAC nas rotas futuras de pedidos/itens.
+
+**Backlog técnico**
 - Validação Zod de `product_id` em `DELETE /product`; remoção (ou política explícita) do banner no Cloudinary ao arquivar.
 - Coerção tipada de `price` (`z.coerce.number()` em multipart).
 - `validateSchema` não repassa dados parseados/transformados para `req`.
 - Naming REST: `GET /categoryall` vs `GET /products`.
 - Padronização de status HTTP (`201` em `/users`, `403` vs `401` em autorização, `404` para não encontrado).
 - Refresh token, revogação e rotação de `JWT_SECRET`.
-- Consistência de imports ESM (sufixo `.js`).
-- Padronizar path do import de `multer` em `routes.ts`.
+- Consistência de imports ESM (sufixo `.js`); path do import de `multer` em `routes.ts`.
 - `return` explícito em `userIsAuthenticated` quando token ausente.
 - Alinhar mensagem Zod de categoria (`.min(2)` vs texto “3 caracteres”).
 - Ordem opcional do pipeline: validar `body`/`query` antes de `isAdminRole` (fail-fast sem consulta ao banco).
+- Scripts `build` / `start` / `test` no `package.json` (hoje só `dev`).
 
 
 ---
@@ -408,7 +435,7 @@ backend/
 - **Adapter `pg`:** client desacoplado do driver; pool e políticas por ambiente.
 - **JWT:** `sub` = id do usuário; payload inclui `name` e `email`; expiração fixa **1h**; sem refresh/blacklist no momento; `role` não está no token — autorização admin consulta o banco por request.
 - **Rotas protegidas:** identidade via `req.user_id` após `verify`; autorização por papel onde `isAdminRole` está encadeado (`POST /category`, `POST /product`, `DELETE /product`).
-- **Validação:** schemas Zod por rota (`userSchema`, `categorySchema`, `productSchema`); em `/category` o Zod roda após auth/RBAC (trade-off: corpo inválido ainda consome JWT + lookup no banco). `POST /product` valida body após multer; `GET /products` valida query após auth (mesmo trade-off com JWT). `DELETE /product` ainda sem `validateSchema` na query.
+- **Validação:** schemas Zod por rota (`userSchema`, `categorySchema`, `productSchema`); em `/category` o Zod roda após auth/RBAC (trade-off: corpo inválido ainda consome JWT + lookup no banco). `POST /product` valida body após multer; `GET /products` e `GET /category/product` validam query após auth (mesmo trade-off com JWT). `DELETE /product` ainda sem `validateSchema` na query.
 - **Upload de produto:** arquivo não persiste em disco — Multer `memoryStorage` envia buffer direto ao Cloudinary via `upload_stream`; URL pública gravada em `Product.banner`.
 - **Delete de produto:** soft-delete — `disabled: true` arquiva o produto; não há hard delete no banco nem exclusão do arquivo no Cloudinary.
 - **Cloudinary:** credenciais exclusivamente via env; pasta `products`; `public_id` com timestamp + nome do arquivo.

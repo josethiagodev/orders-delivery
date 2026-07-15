@@ -12,6 +12,7 @@ import { DetailUserController } from "./controllers/user/DetailUserController.js
 // Controllers Category
 import { CreateCategoryController } from "./controllers/category/CreateCategoryController.js";
 import { ListAllCategoryController } from "./controllers/category/ListAllCategoryController.js";
+import { ListProductsByCategoryController } from "./controllers/product/ListProductsByCategoryController";
 
 // Controllers Product
 import { CreateProductController } from "./controllers/product/CreateProductController.js";
@@ -26,7 +27,9 @@ import { isAdminRole } from "./middlewares/isAdminRole.js";
 // Schemas Data
 import { createUserSchema, authUserSchema } from "./schemas/userSchema.js";
 import { createCategorySchema } from "./schemas/categorySchema.js";
-import { createProductSchema, listProductsSchema } from "./schemas/productSchema";
+import { 
+    createProductSchema, listProductsSchema, listProductsByCategorySchema 
+} from "./schemas/productSchema";
 
 
 export const router = Router();
@@ -71,6 +74,14 @@ router.get(
     "/categoryall",
     userIsAuthenticated,
     new ListAllCategoryController().handle
+);
+
+// GET => Listar produtos de uma categoria
+router.get(
+    "/category/product",
+    userIsAuthenticated,
+    validateSchema(listProductsByCategorySchema),
+    new ListProductsByCategoryController().handle
 );
 
 

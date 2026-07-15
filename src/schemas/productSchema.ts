@@ -34,3 +34,10 @@ export const listProductsSchema = z.object({
             .transform((val) => val === "true")
     }).strict()
 })
+
+
+export const listProductsByCategorySchema = z.object({
+    query: z.object({
+        category_id: z.string({ message: "O ID da categoria é obrigatória!" })
+    })
+})
