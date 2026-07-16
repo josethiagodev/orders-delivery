@@ -19,6 +19,10 @@ import { CreateProductController } from "./controllers/product/CreateProductCont
 import { ListAllProductsController } from "./controllers/product/ListAllProductsController.js";
 import { DeleteProductController } from "./controllers/product/DeleteProductController";
 
+// Controllers Orders
+import { CreateOrderController } from "./controllers/order/CreateOrderController";
+import { ListOrdersController } from "./controllers/order/ListOrdersController";
+
 // Validação + Autenticação (Middlewares)
 import { validateSchema } from "./middlewares/validateSchema.js";
 import { userIsAuthenticated } from "./middlewares/userIsAuthenticated.js";
@@ -28,8 +32,11 @@ import { isAdminRole } from "./middlewares/isAdminRole.js";
 import { createUserSchema, authUserSchema } from "./schemas/userSchema.js";
 import { createCategorySchema } from "./schemas/categorySchema.js";
 import { 
-    createProductSchema, listProductsSchema, listProductsByCategorySchema 
+    createProductSchema, 
+    listProductsSchema, 
+    listProductsByCategorySchema 
 } from "./schemas/productSchema";
+import { createOrderSchema } from "./schemas/orderSchema";
 
 
 export const router = Router();
@@ -41,19 +48,22 @@ const uploadFiles = multer(uploadConfig);
 // POST => Criar usuário
 router.post(
     "/users", 
-    validateSchema(createUserSchema), new CreateUserController().handle
+    validateSchema(createUserSchema), 
+    new CreateUserController().handle
 );
 
 // POST => Fazer login por sessão
 router.post(
     "/session", 
-    validateSchema(authUserSchema), new AuthUserController().handle
+    validateSchema(authUserSchema), 
+    new AuthUserController().handle
 );
 
 // GET => Buscar dados do usuário logado
 router.get(
     "/me",
-    userIsAuthenticated, new DetailUserController().handle
+    userIsAuthenticated, 
+    new DetailUserController().handle
 );
 
 
@@ -112,4 +122,22 @@ router.delete(
     userIsAuthenticated, 
     isAdminRole, 
     new DeleteProductController().handle
+);
+
+
+// ## ROTAS ORDERS ## //
+
+// POST => Criar um pedido
+router.post(
+    "/order", 
+    userIsAuthenticated, 
+    validateSchema(createOrderSchema),
+    new CreateOrderController().handle
+)
+
+// GET => Listar todos pedidos
+router.get(
+    "/orders", 
+    userIsAuthenticated, 
+    new ListOrdersController().handle
 );
