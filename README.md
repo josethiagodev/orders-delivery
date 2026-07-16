@@ -17,16 +17,19 @@
 - `POST /product` (JWT + `ADMIN` + multipart + Zod + upload Cloudinary).
 - `GET /products` (JWT + query `disabled` via Zod — listagem de produtos).
 - `DELETE /product` (JWT + `ADMIN` — soft-delete / arquivamento via `disabled`).
+- `POST /order` (JWT + Zod — criação de pedido).
+- `GET /orders` (JWT — listagem de pedidos, com filtro opcional `draft`).
 
 **Domínio cardápio/pedido**
 - Usuários: cadastro (`POST /users`), login (`POST /session`) e perfil (`GET /me`). Sem listagem, edição, delete ou gestão de `role`.
 - Categorias: criação (`POST /category`), listagem (`GET /categoryall`) e produtos por categoria (`GET /category/product`). Sem get-by-id, update ou delete.
 - Produtos: criação com banner via Cloudinary (`POST /product`), listagem com filtro `disabled` (`GET /products`), por categoria (`GET /category/product`) e desativação/arquivamento (`DELETE /product`). Pendente edição (`PATCH`/`PUT`) e get-by-id.
-- Pedidos e itens (`Order` / `Item`): modelados no schema Prisma; **sem rotas HTTP**, controllers, services ou schemas Zod.
+- Pedidos e itens (`Order` / `Item`): modelados no schema Prisma e já expostos em rotas HTTP com criação e listagem (`POST /order`, `GET /orders`); os itens são retornados como sublista do pedido, sem endpoints isolados para CRUD próprio.
 
 **Autenticação e autorização**
 - `jsonwebtoken` + `userIsAuthenticated` (Bearer JWT).
 - `isAdminRole` — RBAC parcial: `POST /category`, `POST /product` e `DELETE /product` exigem `User.role === ADMIN`.
+- `POST /order` e `GET /orders` usam `userIsAuthenticated` (Bearer JWT), sem exigência de `isAdminRole`.
 
 ---
 
@@ -185,7 +188,7 @@ Domínio: **cardápio** (categoria → produto) e **pedido** (pedido → itens).
 - Exige `role === ADMIN`; caso contrário ou usuário inexistente: **401** — `{ "error": "Usuário não tem permissão!" }`.
 - Hoje a API usa **401** também para negação de papel (convenção REST costuma usar **403** — backlog de padronização).
 - Rotas que usam `isAdminRole`: `POST /category`, `POST /product`, `DELETE /product`.
-- `GET /me`, `GET /categoryall`, `GET /category/product`, `GET /products`: qualquer role autenticada (`STAFF` ou `ADMIN`).
+- `GET /me`, `GET /categoryall`, `GET /category/product`, `GET /products`, `POST /order`, `GET /orders`: qualquer role autenticada (`STAFF` ou `ADMIN`).
 
 ---
 
@@ -224,6 +227,33 @@ Domínio: **cardápio** (categoria → produto) e **pedido** (pedido → itens).
 - **Pipeline:** `userIsAuthenticated` → `DetailUserController` → `DetailUserService`.
 - **Sucesso `200`:** `{ id, name, email, role, createdAt }`.
 - **Usuário inexistente:** `400` — `"Usuário não encontrado!"`.
+
+---
+
+### `POST /order`
+
+- **Auth:** Bearer JWT (qualquer role; sem `ADMIN`).
+- **Pipeline:** `userIsAuthenticated` → `validateSchema(createOrderSchema)` → `CreateOrderController` → `CreateOrderService`.
+
+| Campo | Regras (`orderSchema.ts`) |
+|--------|---------------------------|
+| `table` | number inteiro, positivo e obrigatório. |
+| `name` | string opcional; o service usa `""` quando ausente. |
+
+- **Sucesso `201`:** `{ id, table, status, draft, name, createdAt }`.
+- **Validação:** `400` — `{ "error": "Erro de validação!", "details": [ { "message": "..." } ] }`.
+- **Falha persistência:** `400` — `"Falha ao criar seu pedido"`.
+
+---
+
+### `GET /orders`
+
+- **Auth:** Bearer JWT (qualquer role; sem `ADMIN`).
+- **Pipeline:** `userIsAuthenticated` → `ListOrdersController` → `ListOrdersService`.
+- **Query (opcional):** `draft=true|false` — filtro para pedidos em rascunho/prontos.
+
+- **Sucesso `200`:** `[ { id, table, name, draft, status, createdAt, itens: [ { id, amount, product: { id, name, price, description, banner } } ] }, ... ]`.
+- **Falha:** erro do service/Prisma (sem mensagem customizada no momento).
 
 ---
 
@@ -352,7 +382,8 @@ backend/
 │   ├── schemas/
 │   │   ├── userSchema.ts
 │   │   ├── categorySchema.ts      # createCategorySchema
-│   │   └── productSchema.ts       # createProductSchema, listProductsSchema, listProductsByCategorySchema
+│   │   ├── productSchema.ts       # createProductSchema, listProductsSchema, listProductsByCategorySchema
+│   │   └── orderSchema.ts         # createOrderSchema
 │   ├── controllers/
 │   │   ├── user/
 │   │   │   ├── CreateUserController.ts
@@ -361,11 +392,14 @@ backend/
 │   │   ├── category/
 │   │   │   ├── CreateCategoryController.ts
 │   │   │   └── ListAllCategoryController.ts
-│   │   └── product/
-│   │       ├── CreateProductController.ts
-│   │       ├── ListAllProductsController.ts
-│   │       ├── ListProductsByCategoryController.ts
-│   │       └── DeleteProductController.ts
+│   │   ├── product/
+│   │   │   ├── CreateProductController.ts
+│   │   │   ├── ListAllProductsController.ts
+│   │   │   ├── ListProductsByCategoryController.ts
+│   │   │   └── DeleteProductController.ts
+│   │   └── order/
+│   │       ├── CreateOrderController.ts
+│   │       └── ListOrdersController.ts
 │   └── services/
 │       ├── user/
 │       │   ├── CreateUserService.ts
@@ -374,11 +408,14 @@ backend/
 │       ├── category/
 │       │   ├── CreateCategoryService.ts
 │       │   └── ListAllCategoryService.ts
-│       └── product/
-│           ├── CreateProductService.ts
-│           ├── ListAllProductsService.ts
-│           ├── ListProductsByCategoryService.ts
-│           └── DeleteProductService.ts
+│       ├── product/
+│       │   ├── CreateProductService.ts
+│       │   ├── ListAllProductsService.ts
+│       │   ├── ListProductsByCategoryService.ts
+│       │   └── DeleteProductService.ts
+│       └── order/
+│           ├── CreateOrderService.ts
+│           └── ListOrdersService.ts
 ├── package.json
 └── tsconfig.json
 ```
@@ -391,7 +428,7 @@ backend/
 **Feito**
 - Modelagem relacional + migração inicial.
 - Express 5, TypeScript estrito, CORS, JSON parser.
-- Validação Zod (`createUserSchema`, `authUserSchema`, `createCategorySchema`, `createProductSchema`, `listProductsSchema`, `listProductsByCategorySchema`) e middleware reutilizável.
+- Validação Zod (`createUserSchema`, `authUserSchema`, `createCategorySchema`, `createProductSchema`, `listProductsSchema`, `listProductsByCategorySchema`, `createOrderSchema`) e middleware reutilizável.
 - Prisma 7, client em `src/generated/prisma`, adapter **`pg`**.
 - **`POST /users`** — persistência, unicidade de e-mail, hash bcrypt.
 - **`POST /session`** — login com `bcrypt.compare` + JWT (1h).
@@ -402,6 +439,8 @@ backend/
 - **`POST /product`** — criação de produto com upload Multer + Cloudinary (JWT + `ADMIN` + `createProductSchema`).
 - **`GET /products`** — listagem de produtos com filtro `disabled` (JWT + `listProductsSchema`).
 - **`DELETE /product`** — soft-delete / arquivamento (`disabled: true`; JWT + `ADMIN`; query `product_id`).
+- **`POST /order`** — criação de pedido (JWT, qualquer role).
+- **`GET /orders`** — listagem de pedidos (JWT, qualquer role; filtro `draft` opcional).
 - Config `multer` (memória, 4 MB, filtro MIME) e `cloudinary`.
 - Middleware `userIsAuthenticated`, `isAdminRole` e tipagem `Request.user_id`.
 
@@ -409,7 +448,7 @@ backend/
 - Produto: edição (`PATCH`/`PUT`); get-by-id.
 - Categoria: get-by-id, update e delete.
 - Usuário: listagem, alteração de `role`, update e delete.
-- Pedidos e itens: endpoints HTTP + schemas Zod (`Order` / `Item`) — hoje só no banco.
+- Pedidos e itens: endpoints HTTP adicionais (detalhe, atualização de status, itens isolados) — hoje só há criação/listagem de pedidos.
 - RBAC nas rotas futuras de pedidos/itens.
 
 **Backlog técnico**

@@ -15,12 +15,12 @@ API REST construída em Node.js e TypeScript para gestão de comércios e delive
 | Área | Estado |
 |------|--------|
 | Modelagem de dados (Prisma + PostgreSQL) | Completa — User, Category, Product, Order, Item |
-| Endpoints HTTP | Parcial — **9 rotas** ativas |
+| Endpoints HTTP | Parcial — **11 rotas** ativas |
 | Autenticação JWT | Implementada (`/session`, `/me`) |
 | RBAC (role `ADMIN`) | Implementado em `POST /category`, `POST /product` e `DELETE /product` |
 | Categorias | Criação (ADMIN) + listagem (`GET /categoryall`, qualquer role autenticada) + produtos por categoria (`GET /category/product`) |
 | Produtos | `POST /product` (ADMIN + Cloudinary) + listagem (`GET /products`) + por categoria (`GET /category/product`) + soft-delete (`DELETE /product`); pendente edição |
-| Pedidos e itens | Modelados no banco; **sem rotas HTTP** |
+| Pedidos e itens | Criação (`POST /order`) + listagem (`GET /orders`) com filtro `draft`; itens aninhados nos pedidos |
 
 
 ### Público-alvo
@@ -32,7 +32,7 @@ Desenvolvedores que precisam entender a arquitetura, convenções e estado real 
 
 ## Arquitetura
 
-O backend segue uma **arquitetura em camadas horizontais**, organizada por domínio (`user`, `category`, `product`). Cada caso de uso possui controller e service dedicados.
+O backend segue uma **arquitetura em camadas horizontais**, organizada por domínio (`user`, `category`, `product`). Cada caso de uso possui 'controller' e 'service' dedicados.
 
 ```mermaid
 flowchart TD
@@ -112,8 +112,8 @@ Rota → userIsAuthenticated → isAdminRole → multer.single('file') → valid
 | `user` | Sim — cadastro, login, perfil | Sim |
 | `category` | Sim — criação (ADMIN) + listagem | Sim |
 | `product` | Parcial — `POST /product` + `GET /products` + `GET /category/product` + `DELETE /product` (soft-delete); pendente edição | Sim |
-| `order` | Não | Sim |
-| `item` | Não | Sim |
+| `order` | Sim — `POST /order` + `GET /orders` (filtro `draft`); pendente get-by-id, edição status, delete | Sim |
+| `item` | Modelado, referenciado em `GET /orders`; pendente CRUD isolado | Sim |
 
 ---
 
@@ -602,6 +602,8 @@ Não existem schemas Zod para **Order** ou **Item** — domínios ainda sem endp
 | POST | `/product` | JWT + ADMIN | auth → admin → multer → validate → CreateProduct → Cloudinary | 201 |
 | GET | `/products` | JWT | auth → validate → ListAllProducts | 200 |
 | DELETE | `/product` | JWT + ADMIN | auth → isAdmin → DeleteProduct | 200 |
+| POST | `/order` | JWT | auth → validate → CreateOrder | 201 |
+| GET | `/orders` | JWT | auth → ListOrders | 200 |
 
 ---
 
@@ -1014,6 +1016,122 @@ Arquiva (soft-delete) um produto específico, marcando `disabled: true`.
 ---
 
 
+### POST `/order`
+
+Cria um novo pedido (comanda) na mesa.
+
+**Auth:** Bearer JWT (qualquer role: `STAFF` ou `ADMIN`).
+
+**Header:** `Authorization: Bearer <token>`
+
+**Body:**
+
+```json
+{
+  "table": 5,
+  "name": "João"
+}
+```
+
+**Pipeline:** `userIsAuthenticated` → `validateSchema(createOrderSchema)` → `CreateOrderController` → `CreateOrderService`
+
+**Validação (Zod):**
+
+| Campo | Regras |
+|-------|--------|
+| `table` | Número (integer, positivo) — obrigatório |
+| `name` | String — opcional (default: string vazia `""`) |
+
+**Lógica de negócio:**
+- Aceita número da mesa e nome opcional do cliente
+- Persiste com defaults automáticos: `status: false` (pendente), `draft: true` (rascunho)
+- Retorna pedido criado com `id`, `table`, `name`, `status`, `draft`, `createdAt`
+
+**Sucesso — 201:**
+
+```json
+{
+  "id": "uuid",
+  "table": 5,
+  "status": false,
+  "draft": true,
+  "name": "João",
+  "createdAt": "2026-07-16T..."
+}
+```
+
+**Erros:**
+
+| Status | Mensagem | Causa |
+|--------|----------|-------|
+| 401 | `"Token não fornecido!"` / `"Token inválido!"` | Falha de autenticação |
+| 400 | `"Erro de validação!"` + `details` | `table` não é number, não é positivo, ou não é integer |
+| 400 | `"Falha ao criar seu pedido"` | Falha na persistência Prisma |
+
+---
+
+
+### GET `/orders`
+
+Lista pedidos com filtro opcional por status `draft`.
+
+**Auth:** Bearer JWT (qualquer role: `STAFF` ou `ADMIN`).
+
+**Header:** `Authorization: Bearer <token>`
+
+**Query params:**
+
+| Param | Tipo | Obrigatório | Detalhes |
+|-------|------|-------------|----------|
+| `draft` | string | Não | `"true"` ou `"false"`; default implícito `"false"` (pedidos finalizados) |
+
+**Pipeline:** `userIsAuthenticated` → `ListOrdersController` → `ListOrdersService`
+
+**Lógica de negócio:**
+- `findMany` com filtro `where: { draft: draft === "true" ? true : false }`
+- `select`: `id`, `table`, `name`, `draft`, `status`, `createdAt` + relação `itens` (aninhados)
+- Itens incluem: `id`, `amount`, `product` com `id`, `name`, `price`, `description`, `banner`
+- **Sem ordenação** explícita (ordem natural do banco)
+- **Sem paginação** (retorna todos os pedidos do filtro)
+
+**Sucesso — 200:**
+
+```json
+[
+  {
+    "id": "uuid",
+    "table": 5,
+    "name": "João",
+    "draft": false,
+    "status": true,
+    "createdAt": "2026-07-16T...",
+    "itens": [
+      {
+        "id": "uuid",
+        "amount": 2,
+        "product": {
+          "id": "uuid",
+          "name": "Pizza Margherita",
+          "price": 4590,
+          "description": "Molho, mussarela e manjericão",
+          "banner": "https://res.cloudinary.com/.../products/....jpg"
+        }
+      }
+    ]
+  }
+]
+```
+
+**Erros:**
+
+| Status | Mensagem | Causa |
+|--------|----------|-------|
+| 401 | `"Token não fornecido!"` / `"Token inválido!"` | Falha de autenticação |
+| 400 | `"Erro de validação!"` + `details` | Query param `draft` inválido (ex.: `draft=1`) |
+
+---
+
+
 ### Token JWT — especificação
 
 | Propriedade | Valor |
@@ -1155,6 +1273,26 @@ Cliente → userIsAuthenticated → isAdminRole
 ```
 
 
+### Fluxo: POST `/order` (rota privada com validação)
+
+```
+Cliente → userIsAuthenticated (jwt.verify → req.user_id)
+  → validateSchema(createOrderSchema) → CreateOrderController
+  → CreateOrderService → order.create({ table, name }) com defaults (status=false, draft=true)
+  → 201 { id, table, name, status, draft, createdAt }
+```
+
+
+### Fluxo: GET `/orders` (rota privada com validação de query)
+
+```
+Cliente → userIsAuthenticated (jwt.verify → req.user_id)
+  → ListOrdersController (query.draft) → ListOrdersService
+  → order.findMany (where draft, include itens com product) 
+  → 200 [ { id, table, name, status, draft, createdAt, itens: [...] }, ... ]
+```
+
+
 ### Tratamento de erros
 
 ```
@@ -1255,7 +1393,9 @@ Para setup detalhado, consulte o [README.md](./README.md).
 - Criação de produto com JWT + RBAC ADMIN + Multer + Cloudinary (`POST /product`)
 - Listagem de produtos autenticada (`GET /products`) com filtro `disabled`
 - Soft-delete / arquivamento de produto com JWT + RBAC ADMIN (`DELETE /product` → `disabled: true`)
-- Schemas Zod: `createUserSchema`, `authUserSchema`, `createCategorySchema`, `createProductSchema`, `listProductsSchema`, `listProductsByCategorySchema`
+- Criação de pedido com JWT (`POST /order` → table, name)
+- Listagem de pedidos com JWT (`GET /orders` com filtro `draft`; itens aninhados)
+- Schemas Zod: `createUserSchema`, `authUserSchema`, `createCategorySchema`, `createProductSchema`, `listProductsSchema`, `listProductsByCategorySchema`, `createOrderSchema`
 - Config `multer` (memória, 4 MB, filtro MIME) e `cloudinary`
 - Middlewares `userIsAuthenticated` e `isAdminRole`
 - Tipagem `Request.user_id`
@@ -1264,10 +1404,10 @@ Para setup detalhado, consulte o [README.md](./README.md).
 ### Pendente (domínio)
 
 - Product: edição (`PATCH` / `PUT`)
-- Endpoints HTTP para **Order** e **Item**
-- Schemas Zod para Order e Item
+- Order: GET por ID, edição de status/draft, delete
+- Item: CRUD isolado (endpoints dedicados)
+- User: listagem admin, edição perfil, delete conta
 - Coerção tipada de `price` (`z.coerce.number()` em multipart)
-- RBAC em rotas futuras de pedidos/itens
 
 
 ### Débitos técnicos conhecidos
@@ -1296,7 +1436,14 @@ Para setup detalhado, consulte o [README.md](./README.md).
 | Sem `.env.example` | Ausência de template versionado para variáveis de ambiente |
 | Scripts de deploy | Sem `build` / `start` no `package.json` |
 | JWT | Sem refresh token, revogação ou rotação de secret |
+| **Paginação ausente** | `GET /categoryall`, `GET /products`, `GET /orders`, `GET /category/product` — sem `.skip()` / `.take()` no Prisma |
+| **Logs estruturados** | Nenhum logging (console.log, debug, error tracking); sem winston, pino ou similar |
+| **Testes** | Sem testes unitários, integração ou e2e; sem jest, vitest ou similar configurado |
+| **Rate limiting** | Sem rate-limiting middleware; sem express-rate-limit ou similar |
+| **ListOrdersService sem try/catch** | Enquanto outros services envolvem a lógica em try/catch, ListOrdersService não — inconsistência |
+| **DELETE /product sem Zod** | Query `product_id` não validada com validateSchema — falta schema |
+| **Imports ESM Order** | Controllers e services de Order sem sufixo `.js` em imports locais (vs. padrão em outros módulos) |
 
 ---
 
-*Documento alinhado ao estado do repositório em julho/2026 (pós-rota `GET /category/product`).*
+*Documento alinhado ao estado do repositório em julho/2026 (pós-rotas `POST /order` e `GET /orders`).*
