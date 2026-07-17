@@ -22,6 +22,7 @@ import { DeleteProductController } from "./controllers/product/DeleteProductCont
 // Controllers Orders
 import { CreateOrderController } from "./controllers/order/CreateOrderController";
 import { ListOrdersController } from "./controllers/order/ListOrdersController";
+import { AddItemInOrderController } from "./controllers/order/AddItemInOrderController";
 
 // Validação + Autenticação (Middlewares)
 import { validateSchema } from "./middlewares/validateSchema.js";
@@ -36,7 +37,7 @@ import {
     listProductsSchema, 
     listProductsByCategorySchema 
 } from "./schemas/productSchema";
-import { createOrderSchema } from "./schemas/orderSchema";
+import { createOrderSchema, addItemSchema } from "./schemas/orderSchema";
 
 
 export const router = Router();
@@ -45,21 +46,21 @@ const uploadFiles = multer(uploadConfig);
 
 // ## ROTA USERS ## //
 
-// POST => Criar usuário
+// Criar usuário
 router.post(
     "/users", 
     validateSchema(createUserSchema), 
     new CreateUserController().handle
 );
 
-// POST => Fazer login por sessão
+// Fazer login por sessão
 router.post(
     "/session", 
     validateSchema(authUserSchema), 
     new AuthUserController().handle
 );
 
-// GET => Buscar dados do usuário logado
+// Buscar dados do usuário logado
 router.get(
     "/me",
     userIsAuthenticated, 
@@ -70,7 +71,7 @@ router.get(
 
 // ## ROTAS CATEGORIES ## //
 
-// POST => Criar uma categoria
+// Criar uma categoria
 router.post(
     "/category", 
     userIsAuthenticated, 
@@ -79,14 +80,14 @@ router.post(
     new CreateCategoryController().handle
 );
 
-// GET => Listar todas categorias
+// Listar todas categorias
 router.get(
     "/categoryall",
     userIsAuthenticated,
     new ListAllCategoryController().handle
 );
 
-// GET => Listar produtos de uma categoria
+// Listar produtos de uma categoria
 router.get(
     "/category/product",
     userIsAuthenticated,
@@ -95,10 +96,9 @@ router.get(
 );
 
 
-
 // ## ROTAS PRODUCTS ## //
 
-// POST => Criar um produto
+// Criar um produto
 router.post(
     "/product", 
     userIsAuthenticated, 
@@ -108,7 +108,7 @@ router.post(
     new CreateProductController().handle
 );
 
-// GET => Listar todos produtos
+// Listar todos produtos
 router.get(
     "/products",
     userIsAuthenticated,
@@ -116,7 +116,7 @@ router.get(
     new ListAllProductsController().handle
 );
 
-// DELETE => Deletar produto específico
+// Deletar produto específico
 router.delete(
     "/product", 
     userIsAuthenticated, 
@@ -127,7 +127,7 @@ router.delete(
 
 // ## ROTAS ORDERS ## //
 
-// POST => Criar um pedido
+// Criar um pedido
 router.post(
     "/order", 
     userIsAuthenticated, 
@@ -135,9 +135,17 @@ router.post(
     new CreateOrderController().handle
 )
 
-// GET => Listar todos pedidos
+// Listar todos pedidos
 router.get(
     "/orders", 
     userIsAuthenticated, 
     new ListOrdersController().handle
 );
+
+// Adicionar novo 'item' num pedido (order)
+router.post(
+    "/order/add", 
+    userIsAuthenticated, 
+    validateSchema(addItemSchema),
+    new AddItemInOrderController().handle
+)
