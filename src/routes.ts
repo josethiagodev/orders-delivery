@@ -24,13 +24,14 @@ import { CreateOrderController } from "./controllers/order/CreateOrderController
 import { ListOrdersController } from "./controllers/order/ListOrdersController";
 import { AddItemInOrderController } from "./controllers/order/AddItemInOrderController";
 import { RemoveItemInOrderController } from "./controllers/order/RemoveItemInOrderController";
+import { DetailsOrderController } from "./controllers/order/DetailsOrderController";
 
 // Validação + Autenticação (Middlewares)
 import { validateSchema } from "./middlewares/validateSchema.js";
 import { userIsAuthenticated } from "./middlewares/userIsAuthenticated.js";
 import { isAdminRole } from "./middlewares/isAdminRole.js";
 
-// Schemas Data
+// Schemas Data (ZOD)
 import { createUserSchema, authUserSchema } from "./schemas/userSchema.js";
 import { createCategorySchema } from "./schemas/categorySchema.js";
 import { 
@@ -41,7 +42,8 @@ import {
 import { 
     createOrderSchema, 
     addItemSchema, 
-    removeItemSchema 
+    removeItemSchema, 
+    detailsOrderSchema
 } from "./schemas/orderSchema";
 
 
@@ -85,14 +87,14 @@ router.post(
     new CreateCategoryController().handle
 );
 
-// Listar todas categorias
+// Buscar todas categorias
 router.get(
     "/categoryall",
     userIsAuthenticated,
     new ListAllCategoryController().handle
 );
 
-// Listar produtos de uma categoria
+// Buscar produtos de uma categoria
 router.get(
     "/category/product",
     userIsAuthenticated,
@@ -113,7 +115,7 @@ router.post(
     new CreateProductController().handle
 );
 
-// Listar todos produtos
+// Buscar todos produtos
 router.get(
     "/products",
     userIsAuthenticated,
@@ -138,27 +140,35 @@ router.post(
     userIsAuthenticated, 
     validateSchema(createOrderSchema),
     new CreateOrderController().handle
-)
+);
 
-// Listar todos pedidos
+// Buscar todos pedidos
 router.get(
     "/orders", 
     userIsAuthenticated, 
     new ListOrdersController().handle
 );
 
-// Adicionar 'item' na order (pedido)
+// Buscar 'detalhes' de um pedido
+router.get(
+    "/order/details", 
+    userIsAuthenticated, 
+    validateSchema(detailsOrderSchema),
+    new DetailsOrderController().handle
+);
+
+// Adicionar 'item' em um pedido
 router.post(
     "/order/add", 
     userIsAuthenticated, 
     validateSchema(addItemSchema),
     new AddItemInOrderController().handle
-)
+);
 
-// Remover 'item' da order (pedido)
+// Remover 'item' de um pedido
 router.delete(
     "/order/remove", 
     userIsAuthenticated, 
     validateSchema(removeItemSchema), 
     new RemoveItemInOrderController().handle
-)
+);
