@@ -1,18 +1,164 @@
-import { Router } from "express";
+import { Router } from "express"
+import multer from "multer"
 
+// Config Multer
+import uploadConfig from "../src/config/multer";
+
+// Controllers User
 import { CreateUserController } from "./controllers/user/CreateUserController.js";
+import { AuthUserController } from "./controllers/user/AuthUserController.js";
+import { DetailUserController } from "./controllers/user/DetailUserController.js";
 
+// Controllers Category
+import { CreateCategoryController } from "./controllers/category/CreateCategoryController.js";
+import { ListAllCategoryController } from "./controllers/category/ListAllCategoryController.js";
+import { ListProductsByCategoryController } from "./controllers/product/ListProductsByCategoryController";
+
+// Controllers Product
+import { CreateProductController } from "./controllers/product/CreateProductController.js";
+import { ListAllProductsController } from "./controllers/product/ListAllProductsController.js";
+import { DeleteProductController } from "./controllers/product/DeleteProductController";
+
+// Controllers Orders
+import { CreateOrderController } from "./controllers/order/CreateOrderController";
+import { ListOrdersController } from "./controllers/order/ListOrdersController";
+import { AddItemInOrderController } from "./controllers/order/AddItemInOrderController";
+import { RemoveItemInOrderController } from "./controllers/order/RemoveItemInOrderController";
+
+// Validação + Autenticação (Middlewares)
 import { validateSchema } from "./middlewares/validateSchema.js";
-import { createUserSchema } from "./schemas/userSchema.js";
+import { userIsAuthenticated } from "./middlewares/userIsAuthenticated.js";
+import { isAdminRole } from "./middlewares/isAdminRole.js";
+
+// Schemas Data
+import { createUserSchema, authUserSchema } from "./schemas/userSchema.js";
+import { createCategorySchema } from "./schemas/categorySchema.js";
+import { 
+    createProductSchema, 
+    listProductsSchema, 
+    listProductsByCategorySchema 
+} from "./schemas/productSchema";
+import { 
+    createOrderSchema, 
+    addItemSchema, 
+    removeItemSchema 
+} from "./schemas/orderSchema";
 
 
-const router = Router();
+export const router = Router();
+const uploadFiles = multer(uploadConfig);
 
-// Criar Usuário
+
+// ## ROTA USERS ## //
+
+// Criar usuário
 router.post(
     "/users", 
     validateSchema(createUserSchema), 
     new CreateUserController().handle
 );
 
-export { router };
+// Fazer login por sessão
+router.post(
+    "/session", 
+    validateSchema(authUserSchema), 
+    new AuthUserController().handle
+);
+
+// Buscar dados do usuário logado
+router.get(
+    "/me",
+    userIsAuthenticated, 
+    new DetailUserController().handle
+);
+
+
+
+// ## ROTAS CATEGORIES ## //
+
+// Criar uma categoria
+router.post(
+    "/category", 
+    userIsAuthenticated, 
+    isAdminRole, 
+    validateSchema(createCategorySchema),
+    new CreateCategoryController().handle
+);
+
+// Listar todas categorias
+router.get(
+    "/categoryall",
+    userIsAuthenticated,
+    new ListAllCategoryController().handle
+);
+
+// Listar produtos de uma categoria
+router.get(
+    "/category/product",
+    userIsAuthenticated,
+    validateSchema(listProductsByCategorySchema),
+    new ListProductsByCategoryController().handle
+);
+
+
+// ## ROTAS PRODUCTS ## //
+
+// Criar um produto
+router.post(
+    "/product", 
+    userIsAuthenticated, 
+    isAdminRole, 
+    uploadFiles.single('file'),
+    validateSchema(createProductSchema),
+    new CreateProductController().handle
+);
+
+// Listar todos produtos
+router.get(
+    "/products",
+    userIsAuthenticated,
+    validateSchema(listProductsSchema),
+    new ListAllProductsController().handle
+);
+
+// Deletar produto específico
+router.delete(
+    "/product", 
+    userIsAuthenticated, 
+    isAdminRole, 
+    new DeleteProductController().handle
+);
+
+
+// ## ROTAS ORDERS ## //
+
+// Criar um pedido
+router.post(
+    "/order", 
+    userIsAuthenticated, 
+    validateSchema(createOrderSchema),
+    new CreateOrderController().handle
+)
+
+// Listar todos pedidos
+router.get(
+    "/orders", 
+    userIsAuthenticated, 
+    new ListOrdersController().handle
+);
+
+// Adicionar 'item' na order (pedido)
+router.post(
+    "/order/add", 
+    userIsAuthenticated, 
+    validateSchema(addItemSchema),
+    new AddItemInOrderController().handle
+)
+
+// Remover 'item' da order (pedido)
+router.delete(
+    "/order/remove", 
+    userIsAuthenticated, 
+    validateSchema(removeItemSchema), 
+    new RemoveItemInOrderController().handle
+)
