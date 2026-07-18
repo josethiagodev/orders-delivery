@@ -7,8 +7,9 @@ export const createOrderSchema = z.object({
       .int({ message: "O número da mesa deve ser um número inteiro!" })
       .positive({ message: "O número da mesa deve ser um número positivo!" }),
 
-    name: z.string({ message: "O nome é obrigatório e deve ser string!" })
-           .optional(),
+    name: z
+      .string({ message: "O nome é obrigatório e deve ser string!" })
+      .optional(),
   })
 });
 
@@ -42,5 +43,12 @@ export const detailsOrderSchema = z.object({
     order_id: z
       .string({ message: "O 'ID do pedido' deve ser string!" })
       .min(1, { message: "O 'ID do pedido' é obrigatório!" })
+  })
+});
+
+export const sendOrderSchema = z.object({
+  body: z.object({
+    order_id: z.string({ message: "O 'ID do pedido' deve ser string!" }),
+    name: z.string({ message: "O nome deve ser string!" })
   })
 });
