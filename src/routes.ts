@@ -23,6 +23,7 @@ import { DeleteProductController } from "./controllers/product/DeleteProductCont
 import { CreateOrderController } from "./controllers/order/CreateOrderController";
 import { ListOrdersController } from "./controllers/order/ListOrdersController";
 import { AddItemInOrderController } from "./controllers/order/AddItemInOrderController";
+import { RemoveItemInOrderController } from "./controllers/order/RemoveItemInOrderController";
 
 // Validação + Autenticação (Middlewares)
 import { validateSchema } from "./middlewares/validateSchema.js";
@@ -37,7 +38,11 @@ import {
     listProductsSchema, 
     listProductsByCategorySchema 
 } from "./schemas/productSchema";
-import { createOrderSchema, addItemSchema } from "./schemas/orderSchema";
+import { 
+    createOrderSchema, 
+    addItemSchema, 
+    removeItemSchema 
+} from "./schemas/orderSchema";
 
 
 export const router = Router();
@@ -142,10 +147,18 @@ router.get(
     new ListOrdersController().handle
 );
 
-// Adicionar novo 'item' num pedido (order)
+// Adicionar 'item' na order (pedido)
 router.post(
     "/order/add", 
     userIsAuthenticated, 
     validateSchema(addItemSchema),
     new AddItemInOrderController().handle
+)
+
+// Remover 'item' da order (pedido)
+router.delete(
+    "/order/remove", 
+    userIsAuthenticated, 
+    validateSchema(removeItemSchema), 
+    new RemoveItemInOrderController().handle
 )
