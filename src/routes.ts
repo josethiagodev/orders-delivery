@@ -27,6 +27,7 @@ import { RemoveItemInOrderController } from "./controllers/order/RemoveItemInOrd
 import { DetailsOrderController } from "./controllers/order/DetailsOrderController";
 import { SendOrderController } from "./controllers/order/SendOrderController";
 import { FinishOrderController } from "./controllers/order/FinishOrderController";
+import { DeleteOrderController } from "./controllers/order/DeleteOrderController";
 
 // Validação + Autenticação (Middlewares)
 import { validateSchema } from "./middlewares/validateSchema.js";
@@ -47,7 +48,8 @@ import {
     removeItemSchema, 
     detailsOrderSchema,
     sendOrderSchema,
-    finishOrderSchema
+    finishOrderSchema,
+    deleteOrderSchema
 } from "./schemas/orderSchema";
 
 
@@ -138,7 +140,7 @@ router.delete(
 
 // ## ROTAS ORDERS ## //
 
-// Criar um pedido
+// Criar pedido
 router.post(
     "/order", 
     userIsAuthenticated, 
@@ -191,4 +193,12 @@ router.put(
     userIsAuthenticated, 
     validateSchema(finishOrderSchema),
     new FinishOrderController().handle
+);
+
+// Excluir 'pedido'
+router.delete(
+    "/order", 
+    userIsAuthenticated, 
+    validateSchema(deleteOrderSchema),
+    new DeleteOrderController().handle
 );
