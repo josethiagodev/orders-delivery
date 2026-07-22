@@ -26,6 +26,7 @@ import { AddItemInOrderController } from "./controllers/order/AddItemInOrderCont
 import { RemoveItemInOrderController } from "./controllers/order/RemoveItemInOrderController";
 import { DetailsOrderController } from "./controllers/order/DetailsOrderController";
 import { SendOrderController } from "./controllers/order/SendOrderController";
+import { FinishOrderController } from "./controllers/order/FinishOrderController";
 
 // Validação + Autenticação (Middlewares)
 import { validateSchema } from "./middlewares/validateSchema.js";
@@ -45,7 +46,8 @@ import {
     addItemSchema, 
     removeItemSchema, 
     detailsOrderSchema,
-    sendOrderSchema
+    sendOrderSchema,
+    finishOrderSchema
 } from "./schemas/orderSchema";
 
 
@@ -181,4 +183,12 @@ router.put(
     userIsAuthenticated, 
     validateSchema(sendOrderSchema), 
     new SendOrderController().handle
+);
+
+// Finalizar 'pedido' da produção
+router.put(
+    "/order/finish",
+    userIsAuthenticated, 
+    validateSchema(finishOrderSchema),
+    new FinishOrderController().handle
 );
