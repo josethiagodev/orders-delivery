@@ -15,12 +15,12 @@ API REST construída em Node.js e TypeScript para gestão de comércios e delive
 | Área | Estado |
 |------|--------|
 | Modelagem de dados (Prisma + PostgreSQL) | Completa — User, Category, Product, Order, Item |
-| Endpoints HTTP | Parcial — **11 rotas** ativas |
+| Endpoints HTTP | **17 rotas** ativas |
 | Autenticação JWT | Implementada (`/session`, `/me`) |
 | RBAC (role `ADMIN`) | Implementado em `POST /category`, `POST /product` e `DELETE /product` |
 | Categorias | Criação (ADMIN) + listagem (`GET /categoryall`, qualquer role autenticada) + produtos por categoria (`GET /category/product`) |
 | Produtos | `POST /product` (ADMIN + Cloudinary) + listagem (`GET /products`) + por categoria (`GET /category/product`) + soft-delete (`DELETE /product`); pendente edição |
-| Pedidos e itens | Criação (`POST /order`) + listagem (`GET /orders`) com filtro `draft`; itens aninhados nos pedidos |
+| Pedidos e itens | Criação (`POST /order`) + listagem (`GET /orders`) com filtro `draft` + detalhes por ID + CRUD de itens (adicionar, remover) + transição de status (envio, finalização, deleção) |
 
 
 ### Público-alvo
@@ -112,8 +112,8 @@ Rota → userIsAuthenticated → isAdminRole → multer.single('file') → valid
 | `user` | Sim — cadastro, login, perfil | Sim |
 | `category` | Sim — criação (ADMIN) + listagem | Sim |
 | `product` | Parcial — `POST /product` + `GET /products` + `GET /category/product` + `DELETE /product` (soft-delete); pendente edição | Sim |
-| `order` | Sim — `POST /order` + `GET /orders` (filtro `draft`); pendente get-by-id, edição status, delete | Sim |
-| `item` | Modelado, referenciado em `GET /orders`; pendente CRUD isolado | Sim |
+| `order` | Completo — `POST /order` + `GET /orders` + `GET /order/details` + `PUT /order/send` + `PUT /order/finish` + `DELETE /order` | Sim |
+| `item` | Completo — `POST /order/add` (criar) + `DELETE /order/remove` (remover); modelado e operacional | Sim |
 
 ---
 
@@ -604,6 +604,12 @@ Não existem schemas Zod para **Order** ou **Item** — domínios ainda sem endp
 | DELETE | `/product` | JWT + ADMIN | auth → isAdmin → DeleteProduct | 200 |
 | POST | `/order` | JWT | auth → validate → CreateOrder | 201 |
 | GET | `/orders` | JWT | auth → ListOrders | 200 |
+| GET | `/order/details` | JWT | auth → validate → DetailsOrder | 200 |
+| POST | `/order/add` | JWT | auth → validate → AddItemInOrder | 201 |
+| DELETE | `/order/remove` | JWT | auth → validate → RemoveItemInOrder | 200 |
+| PUT | `/order/send` | JWT | auth → validate → SendOrder | 200 |
+| PUT | `/order/finish` | JWT | auth → validate → FinishOrder | 200 |
+| DELETE | `/order` | JWT | auth → validate → DeleteOrder | 200 |
 
 ---
 
@@ -1132,6 +1138,327 @@ Lista pedidos com filtro opcional por status `draft`.
 ---
 
 
+### GET `/order/details`
+
+Busca detalhes completos de um pedido específico pelo ID.
+
+**Auth:** Bearer JWT (qualquer role: `STAFF` ou `ADMIN`).
+
+**Header:** `Authorization: Bearer <token>`
+
+**Query params:**
+
+| Param | Tipo | Obrigatório | Detalhes |
+|-------|------|-------------|----------|
+| `order_id` | string (UUID) | Sim | ID do pedido cujos detalhes serão retornados |
+
+**Pipeline:** `userIsAuthenticated` → `validateSchema(detailsOrderSchema)` → `DetailsOrderController` → `DetailsOrderService`
+
+**Lógica de negócio:**
+- Busca pedido por `id` com `findFirst`
+- Retorna pedido com todos os detalhes (timestamps `createdAt`, `updatedAt` inclusos)
+- Inclui relação `itens` aninhados com dados completos do `product` (id, name, price, description, banner)
+
+**Sucesso — 200:**
+
+```json
+{
+  "id": "uuid",
+  "table": 5,
+  "name": "João",
+  "draft": false,
+  "status": true,
+  "createdAt": "2026-07-16T...",
+  "updatedAt": "2026-07-16T...",
+  "itens": [
+    {
+      "id": "uuid",
+      "amount": 2,
+      "createdAt": "2026-07-16T...",
+      "product": {
+        "id": "uuid",
+        "name": "Pizza Margherita",
+        "price": 4590,
+        "description": "Molho, mussarela e manjericão",
+        "banner": "https://res.cloudinary.com/.../products/....jpg"
+      }
+    }
+  ]
+}
+```
+
+**Erros:**
+
+| Status | Mensagem | Causa |
+|--------|----------|-------|
+| 401 | `"Token não fornecido!"` / `"Token inválido!"` | Falha de autenticação |
+| 400 | `"Erro de validação!"` + `details` | Query `order_id` ausente ou não-string |
+| 400 | `"Pedido não encontrado!"` | `order_id` inexistente no banco |
+| 400 | `"Falha ao buscar os detalhes do pedido!"` | Falha na consulta Prisma |
+
+---
+
+
+### POST `/order/add`
+
+Adiciona um item (produto) a um pedido existente.
+
+**Auth:** Bearer JWT (qualquer role: `STAFF` ou `ADMIN`).
+
+**Header:** `Authorization: Bearer <token>`
+
+**Body:**
+
+```json
+{
+  "order_id": "uuid-do-pedido",
+  "product_id": "uuid-do-produto",
+  "amount": 2
+}
+```
+
+**Pipeline:** `userIsAuthenticated` → `validateSchema(addItemSchema)` → `AddItemInOrderController` → `AddItemInOrderService`
+
+**Validação (Zod):**
+
+| Campo | Regras |
+|-------|--------|
+| `order_id` | String, mínimo 1 caractere — obrigatório |
+| `product_id` | String, mínimo 1 caractere — obrigatório |
+| `amount` | Número (integer, positivo) — obrigatório |
+
+**Lógica de negócio:**
+- Valida existência do pedido (`findFirst` por `order_id`)
+- Valida existência do produto (`findFirst` por `product_id` com `disabled: false`)
+- Cria novo registro em `items` com ligação entre `order_id` e `product_id`
+- Retorna item criado com dados do `product` aninhados
+
+**Sucesso — 201:**
+
+```json
+{
+  "id": "uuid",
+  "amount": 2,
+  "order_id": "uuid-do-pedido",
+  "product_id": "uuid-do-produto",
+  "createdAt": "2026-07-16T...",
+  "product": {
+    "id": "uuid",
+    "name": "Pizza Margherita",
+    "price": 4590,
+    "description": "Molho, mussarela e manjericão",
+    "banner": "https://res.cloudinary.com/.../products/....jpg"
+  }
+}
+```
+
+**Erros:**
+
+| Status | Mensagem | Causa |
+|--------|----------|-------|
+| 401 | `"Token não fornecido!"` / `"Token inválido!"` | Falha de autenticação |
+| 400 | `"Erro de validação!"` + `details` | Body inválido (campos ausentes ou mal formados) |
+| 400 | `"Pedido não encontrado!"` | `order_id` inexistente no banco |
+| 400 | `"Produto não encontrado!"` | `product_id` inexistente ou produto está desabilitado (`disabled: true`) |
+| 400 | `"Falha ao adicionar item no pedido!"` | Falha na persistência Prisma |
+
+---
+
+
+### DELETE `/order/remove`
+
+Remove um item específico de um pedido.
+
+**Auth:** Bearer JWT (qualquer role: `STAFF` ou `ADMIN`).
+
+**Header:** `Authorization: Bearer <token>`
+
+**Query params:**
+
+| Param | Tipo | Obrigatório | Detalhes |
+|-------|------|-------------|----------|
+| `item_id` | string (UUID) | Sim | ID do item a remover |
+
+**Pipeline:** `userIsAuthenticated` → `validateSchema(removeItemSchema)` → `RemoveItemInOrderController` → `RemoveItemInOrderService`
+
+**Lógica de negócio:**
+- Valida existência do item (`findFirst` por `item_id`)
+- Remove o registro da tabela `items` (delete hard, não soft-delete)
+- Retorna mensagem de sucesso
+
+**Sucesso — 200:**
+
+```json
+{
+  "message": "Item removido com sucesso!"
+}
+```
+
+**Erros:**
+
+| Status | Mensagem | Causa |
+|--------|----------|-------|
+| 401 | `"Token não fornecido!"` / `"Token inválido!"` | Falha de autenticação |
+| 400 | `"Erro de validação!"` + `details` | Query `item_id` ausente ou não-string |
+| 400 | `"Item não encontrado!"` | `item_id` inexistente no banco |
+| 400 | `"Falha ao remover o item do pedido!"` | Falha no delete Prisma |
+
+---
+
+
+### PUT `/order/send`
+
+Envia um pedido para a cozinha, alterando o status de rascunho (`draft: false`).
+
+**Auth:** Bearer JWT (qualquer role: `STAFF` ou `ADMIN`).
+
+**Header:** `Authorization: Bearer <token>`
+
+**Body:**
+
+```json
+{
+  "order_id": "uuid-do-pedido",
+  "name": "João Silva"
+}
+```
+
+**Pipeline:** `userIsAuthenticated` → `validateSchema(sendOrderSchema)` → `SendOrderController` → `SendOrderService`
+
+**Validação (Zod):**
+
+| Campo | Regras |
+|-------|--------|
+| `order_id` | String — obrigatório |
+| `name` | String — obrigatório (nome do cliente/mesa) |
+
+**Lógica de negócio:**
+- Valida existência do pedido (`findFirst` por `order_id`)
+- Atualiza `draft: false` (marca como enviado para produção)
+- Atualiza o campo `name` do pedido com o valor fornecido
+- Retorna pedido atualizado (sem itens aninhados)
+
+**Sucesso — 200:**
+
+```json
+{
+  "id": "uuid",
+  "table": 5,
+  "name": "João Silva",
+  "draft": false,
+  "status": false,
+  "createdAt": "2026-07-16T..."
+}
+```
+
+**Erros:**
+
+| Status | Mensagem | Causa |
+|--------|----------|-------|
+| 401 | `"Token não fornecido!"` / `"Token inválido!"` | Falha de autenticação |
+| 400 | `"Erro de validação!"` + `details` | Body inválido (campos ausentes ou mal formados) |
+| 400 | `"Pedido não encontrado!"` | `order_id` inexistente no banco |
+| 400 | `"Falha ao enviar o pedido!"` | Falha no update Prisma |
+
+---
+
+
+### PUT `/order/finish`
+
+Marca um pedido como finalizado na cozinha (`status: true`).
+
+**Auth:** Bearer JWT (qualquer role: `STAFF` ou `ADMIN`).
+
+**Header:** `Authorization: Bearer <token>`
+
+**Body:**
+
+```json
+{
+  "order_id": "uuid-do-pedido"
+}
+```
+
+**Pipeline:** `userIsAuthenticated` → `validateSchema(finishOrderSchema)` → `FinishOrderController` → `FinishOrderService`
+
+**Validação (Zod):**
+
+| Campo | Regras |
+|-------|--------|
+| `order_id` | String — obrigatório |
+
+**Lógica de negócio:**
+- Valida existência do pedido (`findFirst` por `order_id`)
+- Atualiza `status: true` (marca como pronto/finalizado na cozinha)
+- Retorna pedido atualizado (sem itens aninhados)
+
+**Sucesso — 200:**
+
+```json
+{
+  "id": "uuid",
+  "table": 5,
+  "name": "João Silva",
+  "draft": false,
+  "status": true,
+  "createdAt": "2026-07-16T..."
+}
+```
+
+**Erros:**
+
+| Status | Mensagem | Causa |
+|--------|----------|-------|
+| 401 | `"Token não fornecido!"` / `"Token inválido!"` | Falha de autenticação |
+| 400 | `"Erro de validação!"` + `details` | Body inválido ou `order_id` ausente |
+| 400 | `"Pedido não finalizado!"` | `order_id` inexistente no banco |
+| 400 | `"Falha ao finalizar o pedido!"` | Falha no update Prisma |
+
+---
+
+
+### DELETE `/order`
+
+Deleta (remove permanentemente) um pedido específico do banco.
+
+**Auth:** Bearer JWT (qualquer role: `STAFF` ou `ADMIN`).
+
+**Header:** `Authorization: Bearer <token>`
+
+**Query params:**
+
+| Param | Tipo | Obrigatório | Detalhes |
+|-------|------|-------------|----------|
+| `order_id` | string (UUID) | Sim | ID do pedido a deletar |
+
+**Pipeline:** `userIsAuthenticated` → `validateSchema(deleteOrderSchema)` → `DeleteOrderController` → `DeleteOrderService`
+
+**Lógica de negócio:**
+- Valida existência do pedido (`findFirst` por `order_id`)
+- Remove o registro do banco (hard delete — não é soft-delete)
+- **Cascata automática:** itens relacionados (`items`) são deletados via `ON DELETE CASCADE` no schema Prisma
+- Retorna mensagem de sucesso
+
+**Sucesso — 200:**
+
+```json
+{
+  "message": "Pedido deletado com sucesso!"
+}
+```
+
+**Erros:**
+
+| Status | Mensagem | Causa |
+|--------|----------|-------|
+| 401 | `"Token não fornecido!"` / `"Token inválido!"` | Falha de autenticação |
+| 400 | `"Erro de validação!"` + `details` | Query `order_id` ausente ou não-string |
+| 400 | `"Pedido não deletado!"` | `order_id` inexistente no banco |
+| 400 | `"Falha ao excluir o pedido!"` | Falha no delete Prisma |
+
+---
+
+
 ### Token JWT — especificação
 
 | Propriedade | Valor |
@@ -1293,6 +1620,66 @@ Cliente → userIsAuthenticated (jwt.verify → req.user_id)
 ```
 
 
+### Fluxo: GET `/order/details` (rota privada com validação de query)
+
+```
+Cliente → userIsAuthenticated (jwt.verify → req.user_id)
+  → validateSchema(detailsOrderSchema) → DetailsOrderController
+  → DetailsOrderService → order.findFirst (where order_id, include itens+product+timestamps)
+  → 200 { id, table, name, draft, status, createdAt, updatedAt, itens: [...] }
+```
+
+
+### Fluxo: POST `/order/add` (rota privada com validação)
+
+```
+Cliente → userIsAuthenticated (jwt.verify → req.user_id)
+  → validateSchema(addItemSchema) → AddItemInOrderController
+  → AddItemInOrderService → findFirst(order_id) → findFirst(product_id, disabled:false)
+  → item.create → 201 { id, amount, order_id, product_id, createdAt, product: {...} }
+```
+
+
+### Fluxo: DELETE `/order/remove` (rota privada com validação de query)
+
+```
+Cliente → userIsAuthenticated (jwt.verify → req.user_id)
+  → validateSchema(removeItemSchema) → RemoveItemInOrderController
+  → RemoveItemInOrderService → findFirst(item_id) → item.delete
+  → 200 { message: "Item removido com sucesso!" }
+```
+
+
+### Fluxo: PUT `/order/send` (rota privada com validação)
+
+```
+Cliente → userIsAuthenticated (jwt.verify → req.user_id)
+  → validateSchema(sendOrderSchema) → SendOrderController
+  → SendOrderService → findFirst(order_id) → order.update({ draft: false, name })
+  → 200 { id, table, name, draft, status, createdAt }
+```
+
+
+### Fluxo: PUT `/order/finish` (rota privada com validação)
+
+```
+Cliente → userIsAuthenticated (jwt.verify → req.user_id)
+  → validateSchema(finishOrderSchema) → FinishOrderController
+  → FinishOrderService → findFirst(order_id) → order.update({ status: true })
+  → 200 { id, table, name, draft, status, createdAt }
+```
+
+
+### Fluxo: DELETE `/order` (rota privada com validação de query)
+
+```
+Cliente → userIsAuthenticated (jwt.verify → req.user_id)
+  → validateSchema(deleteOrderSchema) → DeleteOrderController
+  → DeleteOrderService → findFirst(order_id) → order.delete (cascata: itens deletados automaticamente)
+  → 200 { message: "Pedido deletado com sucesso!" }
+```
+
+
 ### Tratamento de erros
 
 ```
@@ -1393,9 +1780,15 @@ Para setup detalhado, consulte o [README.md](./README.md).
 - Criação de produto com JWT + RBAC ADMIN + Multer + Cloudinary (`POST /product`)
 - Listagem de produtos autenticada (`GET /products`) com filtro `disabled`
 - Soft-delete / arquivamento de produto com JWT + RBAC ADMIN (`DELETE /product` → `disabled: true`)
-- Criação de pedido com JWT (`POST /order` → table, name)
+- Criação de pedido com JWT (`POST /order` → table, name com defaults status/draft)
 - Listagem de pedidos com JWT (`GET /orders` com filtro `draft`; itens aninhados)
-- Schemas Zod: `createUserSchema`, `authUserSchema`, `createCategorySchema`, `createProductSchema`, `listProductsSchema`, `listProductsByCategorySchema`, `createOrderSchema`
+- Busca de detalhes pedido com JWT (`GET /order/details` por ID com timestamps)
+- Adição de itens a pedidos com JWT (`POST /order/add` com validações)
+- Remoção de itens de pedidos com JWT (`DELETE /order/remove` por item ID)
+- Envio de pedidos para cozinha com JWT (`PUT /order/send` → draft: false)
+- Finalização de pedidos com JWT (`PUT /order/finish` → status: true)
+- Deleção de pedidos com JWT (`DELETE /order` com cascata de itens)
+- Schemas Zod: `createUserSchema`, `authUserSchema`, `createCategorySchema`, `createProductSchema`, `listProductsSchema`, `listProductsByCategorySchema`, `createOrderSchema`, `addItemSchema`, `removeItemSchema`, `detailsOrderSchema`, `sendOrderSchema`, `finishOrderSchema`, `deleteOrderSchema`
 - Config `multer` (memória, 4 MB, filtro MIME) e `cloudinary`
 - Middlewares `userIsAuthenticated` e `isAdminRole`
 - Tipagem `Request.user_id`
@@ -1404,8 +1797,6 @@ Para setup detalhado, consulte o [README.md](./README.md).
 ### Pendente (domínio)
 
 - Product: edição (`PATCH` / `PUT`)
-- Order: GET por ID, edição de status/draft, delete
-- Item: CRUD isolado (endpoints dedicados)
 - User: listagem admin, edição perfil, delete conta
 - Coerção tipada de `price` (`z.coerce.number()` em multipart)
 
@@ -1427,10 +1818,10 @@ Para setup detalhado, consulte o [README.md](./README.md).
 | `DELETE /product` sem Zod | Query `product_id` sem `validateSchema` — id ausente/inválido só falha no Prisma |
 | Soft-delete Cloudinary | Arquivamento não remove (nem define política explícita para) o banner no Cloudinary |
 | Import path `multer` | `routes.ts` usa `"../src/config/multer"` em vez de `"./config/multer.js"` |
-| Import ESM `productSchema` | Sem sufixo `.js` (inconsistente com outros imports locais) |
+| Imports ESM `productSchema` | Sem sufixo `.js` (inconsistente com outros imports locais) |
 | Imports ESM (ListAllProducts* / ListProductsByCategory* / DeleteProduct*) | Controllers e services de listagem/delete de produto sem sufixo `.js` |
 | `price` como string | Multipart + Zod string + `Number()` no service — risco de NaN |
-| Imports ESM | Mistura de imports com e sem sufixo `.js` entre módulos |
+| Imports ESM | Mistura de imports com e sem sufixo `.js` entre módulos (User, Category, Product, Order) |
 | Semântica booleanos | Comentários de `disabled` e `draft` podem estar invertidos no schema |
 | `dist/` desatualizado | Build legado não reflete `src/` |
 | Sem `.env.example` | Ausência de template versionado para variáveis de ambiente |
@@ -1440,10 +1831,8 @@ Para setup detalhado, consulte o [README.md](./README.md).
 | **Logs estruturados** | Nenhum logging (console.log, debug, error tracking); sem winston, pino ou similar |
 | **Testes** | Sem testes unitários, integração ou e2e; sem jest, vitest ou similar configurado |
 | **Rate limiting** | Sem rate-limiting middleware; sem express-rate-limit ou similar |
-| **ListOrdersService sem try/catch** | Enquanto outros services envolvem a lógica em try/catch, ListOrdersService não — inconsistência |
-| **DELETE /product sem Zod** | Query `product_id` não validada com validateSchema — falta schema |
-| **Imports ESM Order** | Controllers e services de Order sem sufixo `.js` em imports locais (vs. padrão em outros módulos) |
+| **Validação de ID order/item** | Rotas com query params de IDs (`detailsOrderSchema`, `removeItemSchema`, `deleteOrderSchema`) fazem validação Zod mínima mas não validam formato UUID |
 
 ---
 
-*Documento alinhado ao estado do repositório em julho/2026 (pós-rotas `POST /order` e `GET /orders`).*
+*Documento alinhado ao estado do repositório em julho/2026 (pós-documentação completa: 17 rotas HTTP com endpoints de Order — detalhes, adicionar/remover itens, enviar, finalizar e deletar pedidos).*
