@@ -21,12 +21,14 @@ class CreateUserService {
 
         // Criando HASH da senha
         const passwordHash = await hash(password, 8)
+        // Campo 'e-mail' sem espaços e letras minúsculas
+        const normalizedEmail = email?.trim().toLowerCase();
 
         // Criando dados do usuário
         const user = await prismaClient.user.create({
             data: {
                 name: name,
-                email: email,
+                email: normalizedEmail,
                 password: passwordHash,
             },
             select: {

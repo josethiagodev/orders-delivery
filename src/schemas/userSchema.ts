@@ -26,7 +26,7 @@ export const createUserSchema = z.object({
 export const authUserSchema = z.object({
     body: z.object({
 
-        email: z.email({ message: "Precisa ser um e-mail válido!" })
+        email: z.email({ message: "Digite um e-mail válido!" })
                 .regex(/^(?!\.)(?!.*\.\.)([a-z0-9_'+\-\.]*)[a-z0-9_+-]@([a-z0-9][a-z0-9\-]*\.)+[a-z]{2,}$/i, { message: "Apenas caracteres minúsculos no email!" })
                 .min(1, { message: "Seu e-mail é obrigatório!" }) // Impede string vázia ""
                 .trim()  // Remove espaços
